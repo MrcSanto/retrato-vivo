@@ -58,7 +58,7 @@ retrato-vivo/
 │   ├── damage.py        [Igor]  detecção de riscos, vincos e manchas
 │   ├── inpaint.py       [Igor]  preenchimento dos danos
 │   ├── visualize.py     [Igor]  mapa de danos, antes/depois, painel de etapas
-│   ├── aging.py         [Igor]  envelhecimento sintético (para avaliar)
+│   ├── aging.py         [Igor]  efeitos de foto antiga (avaliação + Máquina do tempo)
 │   ├── metrics.py       [Igor]  PSNR, SSIM, precisão/revocação
 │   ├── pipeline.py      [todos] ordem das etapas: o PONTO DE INTEGRAÇÃO
 │   ├── models.py        [todos] registro e download dos modelos pré-treinados
@@ -163,10 +163,12 @@ Resumo do que existe:
   e relatório de quantas candidatas cada teste descartou.
 - Preenchimento por inpainting (Telea ou Navier-Stokes).
 - Avaliação objetiva: envelhecer uma foto boa, restaurar e medir (PSNR, SSIM, F1).
-- 29 testes automáticos.
+- Efeitos de época prontos para a Máquina do tempo (`aging.py`).
+- 35 testes automáticos.
 
 **Pendências do Igor:**
-- [ ] Fazer os commits desta parte (em vários commits, por arquivo/assunto).
+- [x] Commits desta parte, na branch `igor/restauracao-classica`.
+- [ ] Enviar a branch para o GitHub e abrir o Pull Request para a `main`.
 - [ ] Vinco que cruza cabelo ou outra textura ainda fica com um trecho sem reparo.
 - [ ] Detecção de rasgos (`detect_large_losses`) é básica e fica desligada por padrão.
 - [ ] Apoiar o Marcos Paulo no editor de máscara (`mask_add` / `mask_remove`).
@@ -255,6 +257,38 @@ O professor pediu que o sistema faça algo além de restaurar. **Decisão (15/11
 
 A equipe precisa definir os responsáveis na aula de 16/11, de forma a manter os
 commits equilibrados.
+
+### O que já existe da parte do Igor para cada extra
+
+**Máquina do tempo.** Os efeitos estão prontos e testados em `retrato_vivo/aging.py`.
+Uma época é só uma sequência deles (exemplo no topo do arquivo):
+
+| Grupo | Efeitos |
+|---|---|
+| Tom e cor | `black_and_white`, `sepia`, `fade`, `contrast`, `saturation`, `color_cast` |
+| Lente e filme | `soften`, `vignette`, `grain` |
+| Danos | `add_scratches`, `add_spots` |
+| Acabamento | `crop_square`, `add_border`, `polaroid_frame`, `date_stamp` |
+
+Falta para quem pegar: os presets de cada época (1900, 1920, 1950, 1970, Polaroid 1990),
+um comando ou função `viajar(foto, epoca)` e a aba na GUI. Bônus para a demo: envelhecer
+a selfie do professor e depois restaurá-la com o pipeline (o "ida e volta" já é testado
+em `test_aged_photo_is_restorable`).
+
+**Retrato Vivo.** Usa da parte do Igor:
+
+- `restore(foto).image`: a foto restaurada é a entrada do efeito 3D.
+- `result.damage.faces`: caixas dos rostos (YuNet), úteis para manter a pessoa em
+  primeiro plano e centralizar o movimento da câmera.
+- `inpaint(img, mascara, "ns")`: preenche as faixas de fundo reveladas quando a câmera
+  se move. Testei Telea, Navier-Stokes e uma versão multiescala em buracos desse
+  formato: os três ficaram com erro parecido, e nenhum recria detalhe (o fundo vira um
+  borrão). Por isso a versão multiescala não entrou. Para disfarçar, mantenha o
+  movimento pequeno (as faixas ficam estreitas) e preencha a máscara *antes* de mover.
+
+Falta para quem pegar: estimativa de profundidade (MiDaS via `cv2.dnn`, registrar em
+`models.py`), separar camadas pela profundidade, mover a câmera, gerar os quadros e
+exportar MP4/GIF.
 
 Ideias que ficaram de fora (só se sobrar tempo): estimar a idade das pessoas e dizer
 "hoje teria ~86 anos"; agrupar a mesma pessoa em várias fotos (`cv2.FaceRecognizerSF`);
