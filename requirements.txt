@@ -1,0 +1,5 @@
+numpy>=1.26
+opencv-python>=4.10
+pillow>=11.3          # fallback para AVIF/HEIC (fotos salvas do Google)
+# testes
+pytest>=8
