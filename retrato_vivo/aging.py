@@ -4,8 +4,25 @@ Serve para MEDIR a restauração. ``age_photo`` envelhece uma foto limpa e
 devolve também a máscara verdadeira dos danos; depois de restaurar, dá para
 comparar com a original (comando ``avaliar`` e ``metrics.py``).
 
-Cada função aplica UM efeito de foto antiga. A "Máquina do tempo" (bônus do
-projeto) pode reaproveitar estas mesmas peças.
+Cada função aplica UM efeito de foto antiga. Elas também são as peças de
+montar da **Máquina do tempo** (bônus do projeto): uma época é só uma
+sequência destes efeitos. Exemplo de "foto de 1920"::
+
+    rng = np.random.default_rng()
+    img = black_and_white(foto)
+    img = soften(img, 0.9)
+    img = sepia(img, 0.55)
+    img = fade(img, 0.25)
+    img = vignette(img, 0.6)
+    img = grain(img, 9, rng)
+    img = add_scratches(img, 10, rng)
+    img = add_spots(img, 50, rng)
+    img = add_border(img, 0.04)
+
+Efeitos disponíveis: tom e cor (``black_and_white``, ``sepia``, ``fade``,
+``contrast``, ``saturation``, ``color_cast``), lente e filme (``soften``,
+``vignette``, ``grain``), danos (``add_scratches``, ``add_spots``) e
+acabamento (``crop_square``, ``add_border``, ``polaroid_frame``, ``date_stamp``).
 
 Todas recebem e devolvem imagem BGR ``uint8``. Tamanhos são relativos à
 resolução, então o efeito fica igual numa foto pequena ou grande.
@@ -29,6 +46,11 @@ def _u8(x: np.ndarray) -> np.ndarray:
 
 # ----------------------------------------------------------------- tom e cor
 
+def black_and_white(img: np.ndarray) -> np.ndarray:
+    """Preto e branco (mantém 3 canais, para encadear com os outros efeitos)."""
+    return cv2.cvtColor(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+
+
 def sepia(img: np.ndarray, amount: float = 1.0) -> np.ndarray:
     """Tom marrom-amarelado de papel fotográfico antigo. ``amount`` de 0 a 1."""
     matrix = np.array([[0.131, 0.534, 0.272],
@@ -42,6 +64,27 @@ def fade(img: np.ndarray, amount: float = 0.35,
          paper: tuple[int, int, int] = (175, 200, 215)) -> np.ndarray:
     """Desbotamento: mistura a foto com a cor do papel (perde preto e contraste)."""
     return _u8(img * (1 - amount) + np.array(paper, np.float32) * amount)
+
+
+def contrast(img: np.ndarray, gain: float = 1.2) -> np.ndarray:
+    """Aumenta (>1) ou reduz (<1) o contraste em torno do cinza médio."""
+    return _u8((img.astype(np.float32) - 128.0) * gain + 128.0)
+
+
+def saturation(img: np.ndarray, factor: float = 0.7) -> np.ndarray:
+    """Cores mais fracas (<1) ou mais fortes (>1). 0 deixa a foto cinza."""
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
+    hsv[:, :, 1] = np.clip(hsv[:, :, 1] * factor, 0, 255)
+    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+
+def color_cast(img: np.ndarray, bgr_gain: tuple[float, float, float],
+               lift: tuple[int, int, int] = (0, 0, 0)) -> np.ndarray:
+    """Dominante de cor, como numa cópia colorida que desbotou: multiplica
+    cada canal (B, G, R) por ``bgr_gain`` e soma ``lift`` (clareia as
+    sombras com aquela cor). Ex.: anos 70 = ``(0.82, 0.97, 1.06)``, ``(8, 18, 30)``."""
+    return _u8(img.astype(np.float32) * np.array(bgr_gain, np.float32)
+               + np.array(lift, np.float32))
 
 
 # ------------------------------------------------------------ lente e filme
@@ -108,6 +151,48 @@ def add_spots(img: np.ndarray, n: int, rng: np.random.Generator,
         cv2.ellipse(out, center, axes, angle, 0, 360, (value, value, value), -1, cv2.LINE_AA)
         if mask is not None:
             cv2.ellipse(mask, center, axes, angle, 0, 360, 255, -1, cv2.LINE_8)
+    return out
+
+
+# --------------------------------------------------------------- acabamento
+
+def crop_square(img: np.ndarray) -> np.ndarray:
+    """Recorta o quadrado central da foto (formato Polaroid/Instax)."""
+    h, w = img.shape[:2]
+    side = min(h, w)
+    y0, x0 = (h - side) // 2, (w - side) // 2
+    return img[y0:y0 + side, x0:x0 + side].copy()
+
+
+def add_border(img: np.ndarray, frac: float = 0.04,
+               color: tuple[int, int, int] = (235, 240, 242)) -> np.ndarray:
+    """Borda de papel ao redor da foto (``frac`` do maior lado). A imagem cresce."""
+    b = max(2, int(round(frac * max(img.shape[:2]))))
+    return cv2.copyMakeBorder(img, b, b, b, b, cv2.BORDER_CONSTANT, value=color)
+
+
+def polaroid_frame(img: np.ndarray, color: tuple[int, int, int] = (238, 243, 245)) -> np.ndarray:
+    """Moldura de Polaroid: fina em cima e dos lados, larga embaixo.
+    Use depois de ``crop_square``. A imagem cresce."""
+    side = min(img.shape[:2])
+    thin, thick = int(side * 0.06), int(side * 0.24)
+    return cv2.copyMakeBorder(img, thin, thick, thin, thin, cv2.BORDER_CONSTANT, value=color)
+
+
+def date_stamp(img: np.ndarray, text: str, margin_frac: float = 0.04) -> np.ndarray:
+    """Data laranja no canto inferior direito, como nas câmeras dos anos 90.
+    Só caracteres ASCII (limitação das fontes do OpenCV), ex.: ``"12 08 '95"``."""
+    out = img.copy()
+    h, w = img.shape[:2]
+    font_scale = max(0.4, min(h, w) / 700.0)
+    thickness = max(1, int(round(font_scale * 2)))
+    (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_DUPLEX, font_scale, thickness)
+    m = int(margin_frac * min(h, w))
+    org = (max(0, w - tw - m), h - m)
+    cv2.putText(out, text, org, cv2.FONT_HERSHEY_DUPLEX, font_scale, (20, 60, 120),
+                thickness + 2, cv2.LINE_AA)   # halo escuro
+    cv2.putText(out, text, org, cv2.FONT_HERSHEY_DUPLEX, font_scale, (40, 150, 255),
+                thickness, cv2.LINE_AA)       # laranja
     return out
 
 
