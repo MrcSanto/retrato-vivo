@@ -18,7 +18,7 @@ Em uma frase: o sistema **mede** a foto, corrige cor e contraste só se precisar
 | [`inpaint.py`](../retrato_vivo/inpaint.py) | Como **apagar** o que foi marcado? |
 | [`visualize.py`](../retrato_vivo/visualize.py) | Como mostrar o que foi feito (mapa de danos, antes/depois, painel)? |
 | [`pipeline.py`](../retrato_vivo/pipeline.py) | Em que ordem tudo roda? |
-| [`aging.py`](../retrato_vivo/aging.py) | Como estragar uma foto boa de propósito, para testar? |
+| [`aging.py`](../retrato_vivo/aging.py) | Como estragar uma foto boa de propósito, para testar? (os mesmos efeitos montam a Máquina do tempo) |
 | [`metrics.py`](../retrato_vivo/metrics.py) | Quão boa ficou a restauração, em números? |
 | [`cli.py`](../retrato_vivo/cli.py) | Como rodar tudo pelo terminal? |
 
@@ -160,7 +160,7 @@ Resultados com a sensibilidade padrão (0,5):
 *Precisão*: do que foi marcado, quanto era dano. *Revocação*: do dano que existia,
 quanto foi marcado. *PSNR*: quanto maior, mais parecida com a original.
 
-Testes automáticos: `python -m pytest` (29 testes, um bloco por arquivo).
+Testes automáticos: `python -m pytest` (35 testes, um bloco por arquivo).
 
 ## 7. Limitações conhecidas
 
