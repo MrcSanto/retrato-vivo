@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+# pesos de modelos (baixados por script, não versionados)
+models/*
+!models/README.md
+# saídas geradas
+saida/
+avaliacao/
+*.log
+.vscode/
+.idea/
+
+# fotos de teste locais (o enunciado pede só código-fonte e dependências)
+imagens/
