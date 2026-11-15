@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from retrato_vivo import damage, metrics, preprocess
+from retrato_vivo import aging
 from retrato_vivo.aging import AgingConfig, age_photo, grain, sepia
 from retrato_vivo.cli import explain
 from retrato_vivo.inpaint import inpaint
@@ -269,3 +270,60 @@ def test_visualizations_have_sane_shapes():
     assert side_by_side(res.original, res.image).shape[0] == 300
     panel = steps_panel(res.steps, columns=3, cell_height=100)
     assert panel.ndim == 3 and panel.shape[1] > 400
+
+
+# ================================================================= aging.py
+# Efeitos usados pela Máquina do tempo.
+
+def test_tone_effects_keep_size_and_type():
+    img = make_scene(120, 160)
+    rng = np.random.default_rng(0)
+    effects = [aging.black_and_white, aging.sepia, aging.fade, aging.contrast,
+               aging.saturation, lambda x: aging.color_cast(x, (0.8, 1.0, 1.1), (5, 10, 20)),
+               aging.soften, aging.vignette, lambda x: aging.grain(x, 5, rng),
+               lambda x: aging.add_scratches(x, 5, rng), lambda x: aging.add_spots(x, 20, rng),
+               lambda x: aging.date_stamp(x, "12 08 '95")]
+    for fx in effects:
+        out = fx(img)
+        assert out.shape == img.shape and out.dtype == np.uint8
+
+
+def test_black_and_white_and_saturation_zero_are_gray():
+    img = make_scene()
+    assert preprocess.is_gray(aging.black_and_white(img))
+    assert preprocess.diagnose(aging.saturation(img, 0.0)).monochrome
+
+
+def test_contrast_and_color_cast_do_what_they_say():
+    img = make_scene()
+    assert aging.contrast(img, 1.5).std() > img.std() > aging.contrast(img, 0.6).std()
+    warm = aging.color_cast(img, (0.8, 1.0, 1.1))
+    assert warm[:, :, 2].mean() > img[:, :, 2].mean()   # mais vermelho
+    assert warm[:, :, 0].mean() < img[:, :, 0].mean()   # menos azul
+
+
+def test_frames_grow_the_image():
+    img = make_scene(300, 400)
+    assert aging.crop_square(img).shape[:2] == (300, 300)
+    bordered = aging.add_border(img, 0.05)
+    assert bordered.shape[0] == 300 + 2 * 20 and bordered.shape[1] == 400 + 2 * 20
+    polaroid = aging.polaroid_frame(aging.crop_square(img))
+    assert polaroid.shape[0] > polaroid.shape[1]          # base mais larga que o topo
+
+
+def test_date_stamp_draws_orange_in_the_corner():
+    img = np.zeros((400, 400, 3), np.uint8)
+    out = aging.date_stamp(img, "12 08 '95")
+    corner = out[300:, 200:]
+    orange = (corner[:, :, 2] > 200) & (corner[:, :, 0] < 80)
+    assert orange.sum() > 50 and not out[:100, :100].any()
+
+
+def test_aged_photo_is_restorable():
+    """Ida e volta: foto envelhecida com os efeitos da Máquina do tempo é
+    reconhecida como P&B/sépia e tem os danos detectados pela restauração."""
+    rng = np.random.default_rng(3)
+    old = aging.add_scratches(aging.grain(aging.sepia(aging.black_and_white(make_scene()), 0.6), 6, rng), 10, rng)
+    res = restore(old)
+    assert res.diagnosis.monochrome
+    assert res.damage.stats["riscos"] + res.damage.stats["vincos"] >= 3
