@@ -23,7 +23,24 @@ MODELS: dict[str, tuple[str, str, str]] = {
         "face_detection_yunet_2023mar.onnx",
         "Detector de rostos YuNet (protege rostos na detecção de danos)",
     ),
-    # Marco: adicionar aqui colorização, super-resolução, etc.
+    # Colorização de Zhang et al. (ECCV 2016), em Caffe: precisa dos três arquivos.
+    "colorizacao_rede": (
+        "colorization_deploy_v2.prototxt",
+        "https://raw.githubusercontent.com/richzhang/colorization/caffe/colorization/"
+        "models/colorization_deploy_v2.prototxt",
+        "Colorização (Zhang et al., ECCV 2016): arquitetura da rede",
+    ),
+    "colorizacao_pesos": (
+        "colorization_release_v2.caffemodel",
+        "https://www.dropbox.com/s/dx0qvhhp5hbcx7z/colorization_release_v2.caffemodel?dl=1",
+        "Colorização (Zhang et al., ECCV 2016): pesos treinados (129 MB)",
+    ),
+    "colorizacao_cores": (
+        "pts_in_hull.npy",
+        "https://raw.githubusercontent.com/richzhang/colorization/caffe/colorization/"
+        "resources/pts_in_hull.npy",
+        "Colorização (Zhang et al., ECCV 2016): as 313 cores que a rede escolhe",
+    ),
 }
 
 
