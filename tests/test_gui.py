@@ -4,6 +4,7 @@ Rodam sem tela: a plataforma "offscreen" do Qt desenha as janelas na memória.
 """
 
 import os
+import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -13,9 +14,11 @@ from PySide6.QtCore import QMimeData, QPointF, QRect, QSize, Qt, QUrl
 from PySide6.QtGui import QColor, QDropEvent
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
+from retrato_vivo.gui import worker as worker_module
 from retrato_vivo.gui.convert import fit_rect, to_qimage
 from retrato_vivo.gui.main_window import MainWindow
 from retrato_vivo.gui.photo_view import PhotoView
+from retrato_vivo.gui.worker import RestoreWorker
 from retrato_vivo.io_utils import save_image
 
 RED_BGR, BLUE_BGR = (0, 0, 255), (255, 0, 0)     # o OpenCV guarda os canais como azul, verde, vermelho
@@ -51,9 +54,34 @@ def file_mime(path) -> QMimeData:
     return mime
 
 
+def wait_until(condition, timeout_s: float = 5.0) -> None:
+    """Deixa o Qt entregar os sinais pendentes até ``condition()`` valer."""
+    deadline = time.monotonic() + timeout_s
+    while not condition():
+        assert time.monotonic() < deadline, "a condição não se cumpriu a tempo"
+        QApplication.processEvents()
+        time.sleep(0.005)
+
+
+@pytest.fixture
+def window(app):
+    window = MainWindow()
+    yield window
+    window.close()      # espera a restauração em andamento antes de a janela ser destruída
+
+
 @pytest.fixture
 def photo_file(tmp_path):
     return save_image(tmp_path / "vovó.png", red_and_blue_photo())
+
+
+@pytest.fixture
+def broken_restore(monkeypatch):
+    """Faz a restauração falhar, como acontece quando falta o arquivo de um modelo."""
+    def failing_restore(image, *args, **kwargs):
+        raise RuntimeError("modelo ausente")
+
+    monkeypatch.setattr(worker_module, "restore", failing_restore)
 
 
 @pytest.fixture
@@ -115,16 +143,40 @@ def test_photo_view_draws_the_photo_centered_keeping_proportion(app):
     assert shot.pixelColor(50, 10) not in (RED, BLUE)      # acima da foto: só o fundo
 
 
+# ================================================================= worker.py
+
+def test_worker_emits_the_restored_photo(app):
+    photo = red_and_blue_photo()
+    results = []
+    worker = RestoreWorker(photo)
+    worker.done.connect(results.append)
+
+    worker.run()        # chamado direto, sem thread: o sinal chega na mesma hora
+
+    assert len(results) == 1
+    assert np.array_equal(results[0].original, photo)
+    assert results[0].image.shape == photo.shape
+
+
+def test_worker_reports_the_error_instead_of_dying(app, broken_restore):
+    results, errors = [], []
+    worker = RestoreWorker(red_and_blue_photo())
+    worker.done.connect(results.append)
+    worker.failed.connect(errors.append)
+
+    worker.run()
+
+    assert results == []
+    assert len(errors) == 1 and "modelo ausente" in errors[0]
+
+
 # ============================================================ main_window.py
 
-def test_new_window_shows_a_hint_in_the_status_bar(app):
-    window = MainWindow()
-
+def test_new_window_shows_a_hint_in_the_status_bar(window):
     assert window.statusBar().currentMessage() != ""
 
 
-def test_opening_a_photo_shows_it_and_names_it_in_the_status_bar(app, photo_file):
-    window = MainWindow()
+def test_opening_a_photo_shows_it_and_names_it_in_the_status_bar(window, photo_file):
     window.show()
 
     window.open_photo(photo_file)
@@ -137,10 +189,9 @@ def test_opening_a_photo_shows_it_and_names_it_in_the_status_bar(app, photo_file
     assert shot.pixelColor(3 * view.width() // 4, view.height() // 2) == BLUE
 
 
-def test_opening_a_broken_file_warns_and_keeps_the_current_photo(app, photo_file, tmp_path, warnings):
+def test_opening_a_broken_file_warns_and_keeps_the_current_photo(window, photo_file, tmp_path, warnings):
     broken = tmp_path / "quebrada.jpg"
     broken.write_bytes(b"isto nao e uma imagem")
-    window = MainWindow()
     window.open_photo(photo_file)
 
     window.open_photo(broken)
@@ -150,7 +201,7 @@ def test_opening_a_broken_file_warns_and_keeps_the_current_photo(app, photo_file
     assert "vovó.png" in window.statusBar().currentMessage()
 
 
-def test_choosing_a_photo_in_the_dialog_opens_it(app, photo_file, monkeypatch):
+def test_choosing_a_photo_in_the_dialog_opens_it(window, photo_file, monkeypatch):
     offered_filters = []
 
     def fake_dialog(parent, title, folder, filters):
@@ -158,7 +209,6 @@ def test_choosing_a_photo_in_the_dialog_opens_it(app, photo_file, monkeypatch):
         return str(photo_file), ""
 
     monkeypatch.setattr(QFileDialog, "getOpenFileName", fake_dialog)
-    window = MainWindow()
 
     window.choose_photo()
 
@@ -166,9 +216,8 @@ def test_choosing_a_photo_in_the_dialog_opens_it(app, photo_file, monkeypatch):
     assert "*.webp" in offered_filters[0] and "*.tiff" in offered_filters[0]
 
 
-def test_cancelling_the_dialog_changes_nothing(app, monkeypatch, warnings):
+def test_cancelling_the_dialog_changes_nothing(window, monkeypatch, warnings):
     monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args: ("", ""))
-    window = MainWindow()
 
     window.choose_photo()
 
@@ -176,8 +225,7 @@ def test_cancelling_the_dialog_changes_nothing(app, monkeypatch, warnings):
     assert warnings == []
 
 
-def test_dropping_a_photo_file_opens_it(app, photo_file):
-    window = MainWindow()
+def test_dropping_a_photo_file_opens_it(window, photo_file):
     mime = file_mime(photo_file)
     drop = QDropEvent(QPointF(10, 10), Qt.DropAction.CopyAction, mime,
                       Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
@@ -200,8 +248,7 @@ class FakeDrag:
         self.accepted = True
 
 
-def test_drag_is_accepted_for_files_and_refused_for_text(app, photo_file):
-    window = MainWindow()
+def test_drag_is_accepted_for_files_and_refused_for_text(window, photo_file):
     text_mime = QMimeData()
     text_mime.setText("um texto qualquer")
     file_drag, text_drag = FakeDrag(file_mime(photo_file)), FakeDrag(text_mime)
@@ -211,3 +258,86 @@ def test_drag_is_accepted_for_files_and_refused_for_text(app, photo_file):
 
     assert file_drag.accepted
     assert not text_drag.accepted
+
+
+def test_opening_a_photo_restores_it_in_the_background(window, photo_file):
+    window.open_photo(photo_file)
+
+    assert window.result is None        # open_photo voltou antes de a restauração terminar
+    wait_until(lambda: window.result is not None)
+    assert window.result.image.shape == red_and_blue_photo().shape
+
+
+def test_opening_another_photo_discards_the_previous_result(window, photo_file, tmp_path):
+    other_file = save_image(tmp_path / "outra.png", two_pixel_photo())
+    window.open_photo(photo_file)
+    wait_until(lambda: window.result is not None)
+
+    window.open_photo(other_file)
+
+    assert window.result is None        # o resultado antigo era de outra foto
+    wait_until(lambda: window.result is not None)
+    assert window.result.original.shape == two_pixel_photo().shape
+
+
+def test_restored_photo_replaces_the_original_on_screen(window, photo_file):
+    window.show()
+    window.open_photo(photo_file)
+    wait_until(lambda: window.result is not None)
+
+    view = window.tabs.currentWidget()
+    on_screen = view.grab().toImage().pixelColor(view.width() // 4, view.height() // 2)
+
+    blue, green, red = (int(channel) for channel in window.result.image[50, 50])
+    assert on_screen == QColor(red, green, blue)
+    assert on_screen != RED         # o pipeline altera as cores desta foto
+
+
+def test_window_is_busy_while_restoring_and_free_afterwards(window, photo_file):
+    window.open_photo(photo_file)
+
+    assert not window.toolbar.isEnabled()
+    assert not window.acceptDrops()
+    assert not window.progress.isHidden()
+
+    wait_until(lambda: window.result is not None)
+    assert window.toolbar.isEnabled()
+    assert window.acceptDrops()
+    assert window.progress.isHidden()
+
+
+def test_restore_button_only_works_with_a_photo_open(window, photo_file):
+    assert not window.restore_action.isEnabled()
+
+    window.open_photo(photo_file)
+    wait_until(lambda: window.result is not None)
+
+    assert window.restore_action.isEnabled()
+
+
+def test_restore_button_restores_the_photo_again(window, photo_file):
+    window.open_photo(photo_file)
+    wait_until(lambda: window.result is not None)
+    first = window.result
+
+    window.restore_action.trigger()
+    wait_until(lambda: window.result is not first)
+
+    assert window.result.image.shape == first.image.shape
+
+
+def test_failed_restoration_warns_and_frees_the_window(window, photo_file, warnings, broken_restore):
+    window.open_photo(photo_file)
+    wait_until(lambda: window.toolbar.isEnabled())
+
+    assert len(warnings) == 1 and "modelo ausente" in warnings[0]
+    assert window.result is None
+
+
+def test_closing_the_window_waits_for_the_running_restoration(window, photo_file):
+    window.open_photo(photo_file)
+
+    window.close()
+    QApplication.processEvents()        # só entrega os sinais já emitidos; não espera a thread
+
+    assert window.result is not None
