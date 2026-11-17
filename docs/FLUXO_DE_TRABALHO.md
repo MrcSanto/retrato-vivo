@@ -9,7 +9,7 @@
 | **Professor** | Dr. Rafael Rieder (GitHub: `rafaelrieder`) |
 | **Tema** | Restaurador de fotos antigas, com dois extras (ver [seção 7](#7-o-algo-a-mais)) |
 | **Equipe** | Igor Zanette · Marco Antonio Santolin · Marcos Paulo de Medeiros |
-| **Stack** | Python 3.12 · OpenCV 5 (`cv2`, `cv2.dnn`) · NumPy · PySide6 (GUI) · pytest |
+| **Stack** | Python 3.12+ · OpenCV 4.x (`cv2`, `cv2.dnn`; o 5 não lê Caffe) · NumPy · PySide6 (GUI) · pytest |
 
 ---
 
@@ -177,14 +177,20 @@ Resumo do que existe:
 
 ### 6.2 Marco Antonio Santolin: Deep Learning
 
-**Status: ⏳ não iniciado.** Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
+**Status: 🔄 colorização pronta e testada (16/11); super-resolução a seguir.**
+Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
 "Deep Learning" do enunciado, então é a parte mais visível da nota de complexidade.
 
 **Passo a passo:**
 
 1. Ler a [seção 3](#3-contrato-entre-os-módulos-leia-antes-de-codar) e rodar
    `python -m retrato_vivo restaurar foto.jpg --painel --explicar` para ver o pipeline funcionando.
-2. **Colorização (prioridade 1).** Modelo de Zhang et al. (ECCV 2016) via `cv2.dnn`:
+2. ✅ **Colorização (prioridade 1).** Feito em `ai/colorize.py`: `colorize` (etapa pronta),
+   `make_colorize_stage(intensidade)` (para o slider da GUI) e `colorize_image(img, intensidade)`.
+   Linha de comando: `restaurar foto.jpg --colorir --intensidade-cor 0.8`. 10 testes em `tests/test_ai.py`.
+   **Pendente (Igor):** foto sépia de alto contraste é diagnosticada como colorida
+   (`chroma_std` passa de 6), e aí a colorização é pulada. Plano original, para referência:
+   Modelo de Zhang et al. (ECCV 2016) via `cv2.dnn`:
    - Arquivos: `colorization_deploy_v2.prototxt`, `colorization_release_v2.caffemodel`,
      `pts_in_hull.npy` (repositório `richzhang/colorization`). Registrar em `models.py`.
    - Criar `retrato_vivo/ai/colorize.py` com `colorize(img, result) -> img`.
@@ -199,13 +205,12 @@ Resumo do que existe:
 4. **Restauração de rosto (prioridade 3, opcional).** Recortar os rostos usando
    `result.damage.faces` (o YuNet já roda no pipeline), aplicar um modelo de rosto em
    ONNX (ex.: GFPGAN ou CodeFormer) e colar de volta com `cv2.seamlessClone`.
-   Testar antes se o OpenCV 5 carrega o ONNX escolhido.
+   Testar antes se o OpenCV carrega o ONNX escolhido.
 5. **Inpainting com DL (opcional).** As fotos rasgadas (pedaços faltando) estão fora do
    alcance do preenchimento clássico. Um modelo como o LaMa pode ser plugado em
    `restore(..., inpainter=...)`.
 6. **CUDA (opcional).** O `opencv-python` do pip **não tem CUDA**. Só vale a pena se der
    tempo de compilar o OpenCV com CUDA. O enunciado aceita "DL **e/ou** CUDA", então DL basta.
-   O OpenCV 5 também avisa `Targets are not supported by the new graph engine` (pode ignorar).
 7. Testes em `tests/test_ai.py`, usando `pytest.mark.skipif` quando o modelo não foi baixado.
 8. **Responsável por compartilhar o repo com `rafaelrieder`.**
 
