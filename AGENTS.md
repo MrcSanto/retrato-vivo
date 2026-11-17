@@ -59,6 +59,8 @@ python -m retrato_vivo avaliar foto_boa.jpg -o avaliacao         # PSNR/SSIM
 - Uma branch por tarefa (`marco/colorizacao`, `igor/vincos`, `marcos/gui-mascara`),
   integrada na `main` por Pull Request.
 - Commits pequenos, mensagem em português no imperativo: `Adiciona colorização`.
+- **Sem assinatura de agente** em commits e PRs: nada de `Co-Authored-By`,
+  "Generated with ..." ou links de sessão. O autor é só a pessoa que commita.
 - `python -m pytest` precisa passar antes de abrir o PR.
 - **Nunca** versionar: pesos (`models/`), fotos pessoais, `saida/`, `avaliacao/`, `.venv/`.
 - Ao concluir algo, atualize a seção "Status" da área em `docs/FLUXO_DE_TRABALHO.md`.
