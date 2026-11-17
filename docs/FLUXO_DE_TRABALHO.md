@@ -24,6 +24,7 @@
    - [6.1 Igor: pré-processamento e danos](#61-igor-zanette-pré-processamento-detecção-e-preenchimento-de-danos)
    - [6.2 Marco: Deep Learning](#62-marco-antonio-santolin-deep-learning)
    - [6.3 Marcos Paulo: interface gráfica](#63-marcos-paulo-de-medeiros-interface-gráfica-gui)
+   - [6.4 Itens da proposta enviada ao professor](#64-itens-da-proposta-enviada-ao-professor-a-distribuir)
 7. [O "algo a mais"](#7-o-algo-a-mais)
 8. [Cronograma](#8-cronograma)
 9. [Checklist de entrega](#9-checklist-de-entrega-requisitos-do-enunciado)
@@ -246,6 +247,37 @@ gravação do vídeo demo de 30 a 60 s.
 
 ---
 
+### 6.4 Itens da proposta enviada ao professor (a distribuir)
+
+A proposta enviada ao professor prometeu dois itens que ainda não tinham tarefa, e
+definiu a super-resolução com outros modelos. **A equipe precisa definir os responsáveis.**
+
+| Item | O que fazer | Técnicas | Área sugerida | Responsável |
+|---|---|---|---|---|
+| **Correção de perspectiva** ("foto de uma foto") | Quem fotografa uma foto impressa com o celular tem o papel torto, em trapézio, e com fundo em volta. A etapa acha as 4 bordas do papel, "desentorta" e recorta. | Canny/limiarização, `findContours`, `approxPolyDP` (maior quadrilátero), ordenar cantos, `getPerspectiveTransform` + `warpPerspective` | Igor (pré-processamento) ou Marcos Paulo (modo da GUI) | **A definir** |
+| **Comparação de bordas Canny vs. HED** | Mostrar lado a lado as bordas da foto antes e depois da restauração, pelo método clássico (Canny) e por Deep Learning (HED). Mostra o ganho da restauração e a diferença entre PI clássico e DL. | `cv2.Canny`; HED (Xie & Tu, ICCV 2015, Caffe) via `cv2.dnn`, com a camada `Crop` customizada | Marco (Deep Learning) | **A definir** (sugestão: Marco) |
+| **Super-resolução: modelos** | A proposta citava ESPCN/EDSR via `dnn_superres`, mas esse módulo está no *contrib*, que não instalamos. Usar os mesmos `.pb` via `cv2.dnn`: **ESPCN** como padrão (rápido) e **EDSR** como "qualidade máxima" (lento). | `cv2.dnn.readNetFromTensorflow`, ×2/×4 | Marco | Marco (já na 6.2) |
+
+**Correção de perspectiva, detalhes para quem pegar:**
+- Contrato: `def corrigir_perspectiva(img) -> tuple[np.ndarray, bool]`, que devolve a foto
+  corrigida e se achou o papel. Se não achar um quadrilátero confiável (área mínima, ângulos
+  razoáveis), devolve a foto intacta: uma foto digitalizada normal não pode ser estragada.
+- Entra **antes** do diagnóstico em `pipeline.restore()`, ligada por uma opção em
+  `RestorationConfig` (desligada por padrão) e anotada em `result.steps` / `result.notes`.
+- GUI: caixa "É foto de uma foto impressa", mostrando os 4 cantos detectados, que o usuário
+  pode arrastar se errar.
+- Testes: desenhar um retângulo claro em perspectiva sobre um fundo escuro e conferir que a
+  saída fica retangular; foto sem papel volta intacta.
+
+**Canny vs. HED, detalhes:**
+- Modelo: `deploy.prototxt` + `hed_pretrained_bsds.caffemodel` (56 MB), registrar em `models.py`.
+  Lê via `readNetFromCaffe`, mais um motivo para o OpenCV 4.x.
+- Função em `ai/edges.py`: `bordas_canny(img)`, `bordas_hed(img)` e `painel_bordas(antes, depois)`
+  (2×2: Canny/HED × antes/depois). Não altera a foto: é uma visualização, como `visualize.py`.
+- GUI e CLI: aba "Bordas" / opção `--bordas`.
+
+---
+
 ## 7. O "algo a mais"
 
 O professor pediu que o sistema faça algo além de restaurar. **Decisão (15/11):**
@@ -301,6 +333,7 @@ colorização guiada por clique; laudo de restauração em HTML/PDF.
 | 15–16/11 | ✅ Restauração clássica, testes, documentação | Colorização + registro de modelos | Esqueleto da GUI: abrir, restaurar, antes/depois |
 | 17–22/11 | Ajustes com mais fotos; apoio ao editor de máscara | Super-resolução; rosto ou inpainting DL (opcional) | Etapas, controles, editor de máscara, QThread |
 | 17–22/11 | **Extras (responsáveis a definir): Retrato Vivo e Máquina do tempo** | | |
+| 17–22/11 | **Itens da proposta (seção 6.4, responsáveis a definir): correção de perspectiva e Canny vs. HED** | | |
 | **23/11** | **Integração na GUI (todos juntos em aula)** | | |
 | 24–27/11 | Ajustes finos | Ajustes finos | README |
 | 28–29/11 | Ensaio da apresentação + **vídeo demo** + teste com fotos nunca vistas | | |
@@ -308,7 +341,9 @@ colorização guiada por clique; laudo de restauração em HTML/PDF.
 
 ## 9. Checklist de entrega (requisitos do enunciado)
 
-- [ ] **OpenCV + Deep Learning:** YuNet ✅, colorização, super-resolução, profundidade (MiDaS)
+- [ ] **OpenCV + Deep Learning:** YuNet ✅, colorização, super-resolução (ESPCN/EDSR), bordas HED, profundidade (MiDaS)
+- [ ] **Tudo o que a proposta enviada ao professor prometeu:** correção de perspectiva, Canny vs. HED,
+      slider antes/depois (ver seção 6.4)
 - [ ] **GUI** funcional (PySide6)
 - [ ] **Aplicabilidade prática:** restaurar fotos de família, de forma acessível para leigos
 - [x] **Técnicas de PI claras:** morfologia, segmentação, histerese, inpainting, NLM, CLAHE
