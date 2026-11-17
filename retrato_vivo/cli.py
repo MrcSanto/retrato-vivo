@@ -4,6 +4,7 @@ Exemplos::
 
     python -m retrato_vivo restaurar foto.jpg -o saida --painel --explicar
     python -m retrato_vivo restaurar pasta_de_fotos -o saida --sensibilidade 0.7
+    python -m retrato_vivo restaurar foto_pb.jpg -o saida --colorir --intensidade-cor 0.7
     python -m retrato_vivo avaliar foto_boa.jpg -o avaliacao
     python -m retrato_vivo envelhecer foto_boa.jpg -o antiga.png
     python -m retrato_vivo modelos
@@ -50,8 +51,20 @@ def explain(res: RestorationResult) -> str:
     return "\n".join(lines)
 
 
+def _post_stages_from_args(args: argparse.Namespace) -> list:
+    """Etapas de IA ligadas pela linha de comando (importadas só se usadas)."""
+    stages = []
+    if args.colorir:
+        from .ai.colorize import is_available, make_colorize_stage
+        if not is_available():
+            print("aviso: modelo de colorização não baixado; rode  python -m retrato_vivo modelos")
+        stages.append(("colorizacao", make_colorize_stage(args.intensidade_cor)))
+    return stages
+
+
 def cmd_restaurar(args: argparse.Namespace) -> int:
     cfg = _config_from_args(args)
+    post_stages = _post_stages_from_args(args)
     out_dir = Path(args.saida)
     src_path = Path(args.entrada)
     sources = list_images(src_path) if src_path.is_dir() else [src_path]
@@ -63,7 +76,7 @@ def cmd_restaurar(args: argparse.Namespace) -> int:
             print(f"{src.name}: IGNORADA ({e})")
             failures += 1
             continue
-        res = restore(img, cfg)
+        res = restore(img, cfg, post_stages=post_stages)
         save_image(out_dir / f"{src.stem}_restaurada.png", res.image)
         save_image(out_dir / f"{src.stem}_antes_depois.jpg", side_by_side(res.original, res.image))
         if args.painel:
@@ -161,6 +174,10 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--etapas", action="store_true", help="salva cada etapa em um arquivo")
     r.add_argument("--explicar", action="store_true",
                    help="mostra o diagnóstico e o que cada etapa decidiu")
+    r.add_argument("--colorir", action="store_true",
+                   help="colore fotos P&B/sépia com Deep Learning (fotos coloridas passam direto)")
+    r.add_argument("--intensidade-cor", type=float, default=0.8,
+                   help="força da colorização, de 0 (cinza) a 1 (cor da rede); padrão 0.8")
     common(r)
     r.set_defaults(func=cmd_restaurar)
 

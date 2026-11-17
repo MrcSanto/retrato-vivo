@@ -47,6 +47,8 @@ STEP_INFO: dict[str, tuple[str, str]] = {
     "ruido_removido": ("Ruído removido", "Reduz a granulação preservando as bordas."),
     "clahe": ("Contraste local", "Recupera detalhes em áreas muito escuras ou muito claras."),
     "nitidez": ("Nitidez", "Realça os contornos."),
+    # etapas de IA (retrato_vivo/ai)
+    "colorizacao": ("Colorização", "Uma rede neural prevê as cores de uma foto preto e branco."),
 }
 
 Inpainter = Callable[[np.ndarray, np.ndarray], np.ndarray]
