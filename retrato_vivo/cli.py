@@ -5,6 +5,7 @@ Exemplos::
     python -m retrato_vivo restaurar foto.jpg -o saida --painel --explicar
     python -m retrato_vivo restaurar pasta_de_fotos -o saida --sensibilidade 0.7
     python -m retrato_vivo restaurar foto_pb.jpg -o saida --colorir --intensidade-cor 0.7
+    python -m retrato_vivo restaurar foto_pequena.jpg -o saida --ampliar --modelo-sr edsr
     python -m retrato_vivo avaliar foto_boa.jpg -o avaliacao
     python -m retrato_vivo envelhecer foto_boa.jpg -o antiga.png
     python -m retrato_vivo modelos
@@ -59,6 +60,11 @@ def _post_stages_from_args(args: argparse.Namespace) -> list:
         if not is_available():
             print("aviso: modelo de colorização não baixado; rode  python -m retrato_vivo modelos")
         stages.append(("colorizacao", make_colorize_stage(args.intensidade_cor)))
+    if args.ampliar:
+        from .ai.superres import is_available as sr_available, make_upscale_stage
+        if not sr_available("espcn", 2):
+            print("aviso: modelos de super-resolução não baixados; rode  python -m retrato_vivo modelos")
+        stages.append(("super_resolucao", make_upscale_stage(args.modelo_sr, args.tamanho_alvo)))
     return stages
 
 
@@ -178,6 +184,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="colore fotos P&B/sépia com Deep Learning (fotos coloridas passam direto)")
     r.add_argument("--intensidade-cor", type=float, default=0.8,
                    help="força da colorização, de 0 (cinza) a 1 (cor da rede); padrão 0.8")
+    r.add_argument("--ampliar", action="store_true",
+                   help="amplia fotos pequenas com super-resolução (Deep Learning)")
+    r.add_argument("--modelo-sr", choices=("espcn", "edsr"), default="espcn",
+                   help="espcn: rápido (padrão); edsr: melhor e bem mais lento")
+    r.add_argument("--tamanho-alvo", type=int, default=2048,
+                   help="lado maior desejado após ampliar, em pixels; padrão 2048")
     common(r)
     r.set_defaults(func=cmd_restaurar)
 
