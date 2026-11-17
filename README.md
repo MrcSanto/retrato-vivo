@@ -24,7 +24,7 @@ Restaurador de fotos antigas com OpenCV e Deep Learning. Trabalho final de
 ```bash
 pip install -r requirements.txt
 python -m retrato_vivo modelos                       # baixa os modelos pré-treinados
-python -m retrato_vivo.gui                           # interface gráfica (em construção)
+python -m retrato_vivo.gui [foto.jpg]                # interface gráfica (em construção)
 python -m retrato_vivo restaurar foto.jpg -o saida --painel --explicar
 python -m retrato_vivo avaliar foto_boa.jpg          # estraga, restaura e mede PSNR/SSIM
 python -m pytest
