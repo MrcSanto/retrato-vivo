@@ -1,5 +1,6 @@
 numpy>=1.26
 opencv-python>=4.10,<5   # OpenCV 5 removeu o leitor de Caffe (colorização)
 pillow>=11.3          # fallback para AVIF/HEIC (fotos salvas do Google)
+PySide6-Essentials>=6.7  # interface gráfica (só QtCore, QtGui e QtWidgets)
 # testes
 pytest>=8
