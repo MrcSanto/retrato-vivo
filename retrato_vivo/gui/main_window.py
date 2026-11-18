@@ -6,7 +6,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent, QKeySequence
 from PySide6.QtWidgets import (QDockWidget, QFileDialog, QLabel, QMainWindow, QMessageBox,
                                QProgressBar, QScrollArea, QTabWidget)
@@ -26,6 +26,7 @@ from .worker import RestoreWorker
 OPEN_FILTER = ("Imagens (" + " ".join(f"*{ext}" for ext in SUPPORTED_EXTENSIONS)
                + ");;Todos os arquivos (*)")
 SAVE_FILTER = "PNG (*.png);;JPEG (*.jpg);;Todos os arquivos (*)"
+RERUN_DELAY_MS = 400    # espera depois da última mexida nos controles antes de restaurar de novo
 
 
 FACE_MODEL = "yunet"    # o nome que faces.py usa no registro de modelos
@@ -64,6 +65,14 @@ class MainWindow(QMainWindow):
         self.photo_path: Path | None = None
         self.result: RestorationResult | None = None    # a última restauração da foto aberta
         self.worker: RestoreWorker | None = None
+        self.busy = False                               # há uma restauração rodando?
+
+        # Refaz a restauração quando o usuário para de mexer nos controles. "Tiro único": cada
+        # mexida recomeça a contagem, então arrastar um slider gera uma restauração só, no final.
+        self.rerun_timer = QTimer(self)
+        self.rerun_timer.setSingleShot(True)
+        self.rerun_timer.setInterval(RERUN_DELAY_MS)
+        self.rerun_timer.timeout.connect(self._restore_after_changes)
 
         self.toolbar = self.addToolBar("Principal")
         self.toolbar.setMovable(False)
@@ -87,7 +96,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
 
         self.controls = ControlsPanel()
-        scroll = QScrollArea()                          # em tela baixa o painel rola em vez de ser cortado
+        self.controls.changed.connect(self.rerun_timer.start)
+        scroll = QScrollArea()                         # em tela baixa o painel rola em vez de ser cortado
         scroll.setWidget(self.controls)
         scroll.setWidgetResizable(True)
         # Largura mínima: a do painel, mais a barra de rolagem vertical e a moldura. Sem isto,
@@ -188,6 +198,15 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"{self._photo_label()} · restaurando…")
         self.worker.start()
 
+    def _restore_after_changes(self) -> None:
+        """Chamado pelo ``rerun_timer`` quando o usuário para de mexer nos controles."""
+        if self.image is None:      # sem foto aberta não há o que refazer
+            return
+        if self.busy:
+            self.rerun_timer.start()    # já há uma restauração rodando: tenta de novo daqui a pouco
+            return
+        self.restore_photo()
+
     def _show_result(self, result: RestorationResult) -> None:
         self.result = result
         self.compare_view.set_comparison(result.original, result.image)
@@ -208,6 +227,7 @@ class MainWindow(QMainWindow):
         O pipeline guarda os modelos em variáveis globais, sem trava: duas
         restaurações ao mesmo tempo poderiam se atrapalhar.
         """
+        self.busy = busy
         self.toolbar.setEnabled(not busy)
         self.mask_editor.apply_button.setEnabled(not busy)
         self.setAcceptDrops(not busy)
@@ -219,6 +239,7 @@ class MainWindow(QMainWindow):
             self.worker.wait()
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self.rerun_timer.stop()      # nada de começar outra restauração com a janela fechando
         self._wait_for_worker()
         super().closeEvent(event)
 

@@ -88,6 +88,29 @@ def wait_until(condition, timeout_s: float = 5.0) -> None:
         time.sleep(0.005)
 
 
+def longest_freeze_until(condition, timeout_s: float = 5.0) -> float:
+    """Espera como ``wait_until`` e devolve, em segundos, o maior tempo que o Qt ficou sem devolver o controle.
+
+    Se algum método da janela ficar parado esperando a restauração terminar, esse tempo aparece aqui.
+    """
+    deadline, longest = time.monotonic() + timeout_s, 0.0
+    while not condition():
+        assert time.monotonic() < deadline, "a condição não se cumpriu a tempo"
+        started = time.monotonic()
+        QApplication.processEvents()
+        longest = max(longest, time.monotonic() - started)
+        time.sleep(0.005)
+    return longest
+
+
+def let_qt_run(seconds: float) -> None:
+    """Deixa o Qt trabalhar por um tempo, para o que estiver agendado (timers, sinais) acontecer."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        QApplication.processEvents()
+        time.sleep(0.005)
+
+
 @pytest.fixture
 def window(app):
     window = MainWindow()
@@ -704,6 +727,20 @@ def test_colorize_slider_sets_the_strength(app, colorize_model):
     assert colorize_model == [0.6]
 
 
+def test_panel_announces_every_kind_of_change(app, colorize_model):
+    panel = ControlsPanel()
+    announcements = []
+    panel.changed.connect(lambda: announcements.append("mudou"))
+
+    panel.sensitivity.setValue(70)              # slider
+    panel.detect_spots.setChecked(False)        # caixa de marcar
+    panel.inpaint_method.setCurrentIndex(1)     # lista
+    panel.colorize.setChecked(True)             # etapa de IA
+    panel.colorize_strength.setValue(30)
+
+    assert len(announcements) == 5
+
+
 def test_no_checkbox_text_loses_a_character_to_a_qt_shortcut(app, colorize_model):
     panel = ControlsPanel()
 
@@ -815,6 +852,73 @@ def status_bar_notes(window: MainWindow) -> list[str]:
     return [label.text() for label in window.statusBar().findChildren(QLabel)]
 
 
+def test_changing_a_control_restores_again_by_itself(restored_window):
+    window, with_defaults = restored_window, restored_window.result
+    window.rerun_timer.setInterval(10)          # nos testes, não precisa esperar o usuário parar de mexer
+
+    window.controls.sharpen.setChecked(False)   # ninguém clica em "Restaurar"
+    wait_until(lambda: window.result is not with_defaults)
+
+    assert "nitidez" not in window.result.steps
+
+
+def test_dragging_a_slider_restores_once_with_the_final_value(restore_calls, restored_window):
+    window, with_defaults = restored_window, restored_window.result
+    window.rerun_timer.setInterval(50)
+
+    for position in (55, 60, 65, 70, 75):       # o slider passa por vários valores enquanto é arrastado
+        window.controls.sensitivity.setValue(position)
+    wait_until(lambda: window.result is not with_defaults)
+    let_qt_run(0.3)         # tempo para uma restauração a mais aparecer, se existisse
+
+    assert [call["config"].damage.sensitivity for call in restore_calls] == [0.5, 0.75]
+
+
+def test_change_made_during_a_restoration_is_applied_right_after_it(window, photo_file, monkeypatch):
+    real_restore, sharpen_of_each_run, running, most_at_once = worker_module.restore, [], [], []
+
+    def slow_restore(image, config, **options):
+        sharpen_of_each_run.append(config.preprocess.sharpen)
+        running.append("mais uma")
+        most_at_once.append(len(running))
+        time.sleep(0.3)         # restauração demorada: dá tempo de o controle mudar com ela em andamento
+        result = real_restore(image, config, **options)
+        running.pop()
+        return result
+
+    monkeypatch.setattr(worker_module, "restore", slow_restore)
+    window.rerun_timer.setInterval(10)
+
+    window.open_photo(photo_file)
+    window.controls.sharpen.setChecked(False)
+    freeze = longest_freeze_until(lambda: len(sharpen_of_each_run) == 2 and window.toolbar.isEnabled())
+
+    assert sharpen_of_each_run == [True, False]
+    assert max(most_at_once) == 1               # nunca duas restaurações ao mesmo tempo
+    assert freeze < 0.15                        # a janela não ficou parada esperando a primeira terminar
+    assert "nitidez" not in window.result.steps
+
+
+def test_closing_the_window_cancels_the_pending_restoration(restore_calls, restored_window):
+    restored_window.rerun_timer.setInterval(50)
+    restored_window.controls.sharpen.setChecked(False)
+
+    restored_window.close()
+    let_qt_run(0.25)
+
+    assert len(restore_calls) == 1              # só a restauração de quando a foto foi aberta
+
+
+def test_changing_controls_without_a_photo_does_nothing(window):
+    window.rerun_timer.setInterval(10)
+
+    window.controls.sharpen.setChecked(False)
+    let_qt_run(0.2)
+
+    assert window.worker is None
+    assert window.result is None
+
+
 def test_restore_button_applies_the_current_controls(window, photo_file):
     window.open_photo(photo_file)
     wait_until(lambda: window.result is not None)
@@ -859,12 +963,12 @@ def test_colorize_control_really_colors_a_gray_photo(window, tmp_path):
 
 @pytest.fixture
 def restore_calls(monkeypatch):
-    """Anota os argumentos nomeados de cada chamada a ``restore()`` e deixa a restauração de verdade acontecer."""
+    """Anota a configuração e os argumentos nomeados de cada chamada a ``restore()``, que acontece de verdade."""
     calls = []
     real_restore = worker_module.restore
 
     def recording_restore(image, config, **options):
-        calls.append(options)
+        calls.append({"config": config, **options})
         return real_restore(image, config, **options)
 
     monkeypatch.setattr(worker_module, "restore", recording_restore)

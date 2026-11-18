@@ -7,7 +7,7 @@ não são campos da configuração: entram por ``post_stages()``.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QCheckBox, QComboBox, QFormLayout, QGroupBox, QSlider, QVBoxLayout, QWidget
 
 from ..ai.colorize import DEFAULT_STRENGTH, make_colorize_stage
@@ -37,6 +37,8 @@ def make_checkbox(text: str, checked: bool) -> QCheckBox:
 
 class ControlsPanel(QWidget):
     """Os controles começam nos valores padrão do pipeline; ``config()`` lê o estado atual."""
+
+    changed = Signal()     # o usuário mexeu em algum controle
 
     def __init__(self) -> None:
         super().__init__()
@@ -93,6 +95,17 @@ class ControlsPanel(QWidget):
         for group in (detection, fill, corrections, deep_learning):
             layout.addWidget(group)
         layout.addStretch()
+
+        # Qualquer mexida avisa a janela, que refaz a restauração sozinha. Procurar os controles
+        # pelo tipo faz um controle novo já entrar nesta lista.
+        for slider in self.findChildren(QSlider):
+            slider.valueChanged.connect(self._announce_change)
+        for checkbox in self.findChildren(QCheckBox):
+            checkbox.toggled.connect(self._announce_change)
+        self.inpaint_method.currentIndexChanged.connect(self._announce_change)
+
+    def _announce_change(self) -> None:
+        self.changed.emit()
 
     def post_stages(self) -> list[tuple[str, PostStage]]:
         """As etapas de IA ligadas, no formato de ``restore(post_stages=...)``."""
