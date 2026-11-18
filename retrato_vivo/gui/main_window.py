@@ -132,7 +132,8 @@ class MainWindow(QMainWindow):
     def restore_photo(self) -> None:
         """Restaura a foto aberta em segundo plano. O resultado chega em ``_show_result``."""
         self._wait_for_worker()
-        self.worker = RestoreWorker(self.image, self.controls.config())
+        self.worker = RestoreWorker(self.image, self.controls.config(),
+                                    post_stages=self.controls.post_stages())
         self.worker.done.connect(self._show_result)
         self.worker.failed.connect(self._show_failure)
         self._set_busy(True)

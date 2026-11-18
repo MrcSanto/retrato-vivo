@@ -1,7 +1,8 @@
 """Painel de controles: os ajustes que o usuário pode fazer na restauração.
 
 Cada controle tem o nome do campo de ``RestorationConfig`` que ele altera. A lista
-vem da seção 5 do ``docs/COMO_FUNCIONA.md``.
+vem da seção 5 do ``docs/COMO_FUNCIONA.md``. As etapas de IA (``retrato_vivo/ai``)
+não são campos da configuração: entram por ``post_stages()``.
 """
 
 from __future__ import annotations
@@ -9,7 +10,9 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QComboBox, QFormLayout, QGroupBox, QSlider, QVBoxLayout, QWidget
 
-from ..pipeline import RestorationConfig
+from ..ai.colorize import DEFAULT_STRENGTH, make_colorize_stage
+from ..ai.colorize import is_available as colorize_available
+from ..pipeline import PostStage, RestorationConfig
 
 SLIDER_STEPS = 100   # o QSlider só conhece inteiros: cada passo vale 0,01
 
@@ -76,10 +79,27 @@ class ControlsPanel(QWidget):
         form.addRow(self.clahe, self.clahe_strength)
         form.addRow(self.sharpen, self.sharpen_amount)
 
+        # "&&" é como o Qt escreve um "&" de verdade; um só viraria atalho de teclado e sumiria do texto.
+        self.colorize = make_checkbox("Colorir foto P&&B", False)
+        self.colorize_strength = make_slider(1.0, DEFAULT_STRENGTH)
+        if not colorize_available():
+            self.colorize.setEnabled(False)
+            self.colorize.setText("Colorir (modelo não baixado)")
+            self.colorize.setToolTip("Rode: python -m retrato_vivo modelos")
+        deep_learning = QGroupBox("Deep Learning")
+        QFormLayout(deep_learning).addRow(self.colorize, self.colorize_strength)
+
         layout = QVBoxLayout(self)
-        for group in (detection, fill, corrections):
+        for group in (detection, fill, corrections, deep_learning):
             layout.addWidget(group)
         layout.addStretch()
+
+    def post_stages(self) -> list[tuple[str, PostStage]]:
+        """As etapas de IA ligadas, no formato de ``restore(post_stages=...)``."""
+        stages = []
+        if self.colorize.isChecked():
+            stages.append(("colorizacao", make_colorize_stage(slider_value(self.colorize_strength))))
+        return stages
 
     def config(self) -> RestorationConfig:
         """A configuração que os controles pedem agora. O que não tem controle fica no padrão."""

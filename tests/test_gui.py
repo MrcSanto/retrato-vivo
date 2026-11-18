@@ -12,10 +12,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 import pytest
 from PySide6.QtCore import QEvent, QMimeData, QPointF, QRect, QSize, Qt, QUrl
-from PySide6.QtGui import QColor, QDropEvent, QMouseEvent
-from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMessageBox
+from PySide6.QtGui import QColor, QDropEvent, QKeySequence, QMouseEvent
+from PySide6.QtWidgets import QApplication, QCheckBox, QFileDialog, QLabel, QMessageBox
 
 from retrato_vivo import models
+# O pacote retrato_vivo.ai exporta a função "colorize", que esconde o módulo de mesmo nome.
+from retrato_vivo.ai.colorize import DEFAULT_STRENGTH as COLORIZE_DEFAULT_STRENGTH
+from retrato_vivo.ai.colorize import is_available as colorize_model_is_downloaded
+from retrato_vivo.gui import controls as controls_module
 from retrato_vivo.gui import worker as worker_module
 from retrato_vivo.gui.compare_view import CompareView
 from retrato_vivo.gui.controls import ControlsPanel
@@ -394,7 +398,82 @@ def test_sliders_stop_at_the_limits_the_pipeline_documents(app):
             cfg.preprocess.clahe_strength, cfg.preprocess.sharpen_amount) == (1.0, 2.0, 1.0, 1.0)
 
 
+def paint_it_green(img: np.ndarray, result) -> np.ndarray:
+    """Etapa de IA de mentira: fácil de reconhecer no resultado e não depende de modelo baixado."""
+    return np.full_like(img, GREEN_BGR)
+
+
+@pytest.fixture
+def colorize_model(monkeypatch):
+    """Finge que o modelo de colorização está baixado e troca a rede por ``paint_it_green``.
+
+    Devolve a lista das intensidades pedidas ao criar a etapa.
+    """
+    requested_strengths = []
+
+    def fake_make_colorize_stage(strength: float):
+        requested_strengths.append(strength)
+        return paint_it_green
+
+    monkeypatch.setattr(controls_module, "colorize_available", lambda: True)
+    monkeypatch.setattr(controls_module, "make_colorize_stage", fake_make_colorize_stage)
+    return requested_strengths
+
+
+def test_colorization_is_off_until_the_user_asks(app, colorize_model):
+    assert ControlsPanel().post_stages() == []
+
+
+def test_checking_colorize_adds_the_stage_with_the_default_strength(app, colorize_model):
+    panel = ControlsPanel()
+
+    panel.colorize.setChecked(True)
+
+    assert panel.post_stages() == [("colorizacao", paint_it_green)]
+    assert colorize_model == [COLORIZE_DEFAULT_STRENGTH]
+
+
+def test_colorize_slider_sets_the_strength(app, colorize_model):
+    panel = ControlsPanel()
+    panel.colorize.setChecked(True)
+
+    panel.colorize_strength.setValue(60)
+    panel.post_stages()
+
+    assert colorize_model == [0.6]
+
+
+def test_no_checkbox_text_loses_a_character_to_a_qt_shortcut(app, colorize_model):
+    panel = ControlsPanel()
+
+    # No Qt, "&" antes de uma letra vira atalho de teclado e some do texto: "P&B" apareceria "PB".
+    shortcuts = {box.text(): QKeySequence.mnemonic(box.text()).toString()
+                 for box in panel.findChildren(QCheckBox)}
+
+    assert set(shortcuts.values()) == {""}, shortcuts
+
+
+def test_colorize_cannot_be_checked_without_the_model(app, monkeypatch):
+    monkeypatch.setattr(controls_module, "colorize_available", lambda: False)
+
+    panel = ControlsPanel()
+
+    assert not panel.colorize.isEnabled()
+    assert "python -m retrato_vivo modelos" in panel.colorize.toolTip()
+
+
 # ================================================================= worker.py
+
+def test_worker_passes_the_extra_options_to_restore(app):
+    results = []
+    worker = RestoreWorker(red_and_blue_photo(), RestorationConfig(), post_stages=[("carimbo", paint_it_green)])
+    worker.done.connect(results.append)
+
+    worker.run()
+
+    assert "carimbo" in results[0].steps
+    assert np.array_equal(results[0].image, solid_photo(GREEN_BGR))
+
 
 def test_worker_restores_with_the_given_configuration(app):
     without_sharpening = RestorationConfig()
@@ -486,6 +565,35 @@ def test_restore_button_applies_the_current_controls(window, photo_file):
 
     assert "nitidez" in with_defaults.steps
     assert "nitidez" not in window.result.steps
+
+
+def test_restore_button_runs_the_ai_stages_chosen_in_the_controls(colorize_model, window, photo_file):
+    window.open_photo(photo_file)
+    wait_until(lambda: window.result is not None)
+    without_colorization = window.result
+
+    window.controls.colorize.setChecked(True)
+    window.restore_action.trigger()
+    wait_until(lambda: window.result is not without_colorization)
+
+    assert "colorizacao" not in without_colorization.steps
+    assert "colorizacao" in window.result.steps
+    assert np.array_equal(window.result.image, solid_photo(GREEN_BGR))
+
+
+@pytest.mark.skipif(not colorize_model_is_downloaded(),
+                    reason="modelo de colorização não baixado (python -m retrato_vivo modelos)")
+def test_colorize_control_really_colors_a_gray_photo(window, tmp_path):
+    gray_ramp = np.tile(np.linspace(40, 220, 200).astype(np.uint8)[None, :, None], (100, 1, 3))
+    gray_file = save_image(tmp_path / "cinza.png", gray_ramp)
+    window.controls.colorize.setChecked(True)
+
+    window.open_photo(gray_file)
+    wait_until(lambda: window.result is not None, timeout_s=60)
+
+    blue, green, red = (window.result.image[..., channel].astype(int) for channel in range(3))
+    assert "colorida pela rede" in window.result.notes["colorizacao"]
+    assert np.abs(red - blue).max() > 0        # numa foto cinza os três canais seriam iguais
 
 
 def test_steps_tab_follows_the_open_photo(window, photo_file, tmp_path):

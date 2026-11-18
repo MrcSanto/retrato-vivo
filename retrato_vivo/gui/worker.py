@@ -14,14 +14,15 @@ class RestoreWorker(QThread):
     done = Signal(object)     # o RestorationResult
     failed = Signal(str)      # a mensagem do erro
 
-    def __init__(self, image: np.ndarray, config: RestorationConfig) -> None:
+    def __init__(self, image: np.ndarray, config: RestorationConfig, **restore_options) -> None:
+        """``restore_options`` são os outros argumentos nomeados de ``restore()``, como ``post_stages``."""
         super().__init__()
-        self._image, self._config = image, config
+        self._image, self._config, self._restore_options = image, config, restore_options
 
     def run(self) -> None:
         """O Qt executa este método na thread nova quando alguém chama ``start()``."""
         try:
-            result = restore(self._image, self._config)
+            result = restore(self._image, self._config, **self._restore_options)
         # Pega qualquer erro de propósito: uma exceção solta aqui mataria a thread
         # em silêncio e a janela ficaria esperando para sempre.
         except Exception as error:
