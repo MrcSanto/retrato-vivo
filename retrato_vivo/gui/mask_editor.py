@@ -13,15 +13,19 @@ import cv2
 import numpy as np
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QImage, QMouseEvent, QPainter, QPaintEvent
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QRadioButton, QSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QPushButton, QRadioButton, QSlider,
+                               QVBoxLayout, QWidget)
 
+from ..pipeline import RestorationResult
 from .photo_view import PhotoView
 
+DAMAGE_MAP_STEP = "mapa_de_danos"   # o nome que o pipeline dá à etapa em result.steps
 ADD_COLOR = (0, 255, 255)        # RGB ciano: a cor do "pintado pelo usuário" no mapa de danos
 REMOVE_COLOR = (0, 0, 255)       # RGB azul: não aparece no mapa de danos, então não se confunde
 OVERLAY_ALPHA = 150              # de 0 (invisível) a 255 (cobre a foto)
 DEFAULT_BRUSH_SIZE = 16          # diâmetro do pincel, em pixels da tela
 MIN_BRUSH_SIZE, MAX_BRUSH_SIZE = 2, 80
+MIN_SLIDER_WIDTH = 80            # em pixels da tela: cerca de 1 pixel por tamanho de pincel
 RGBA_CHANNELS = 4
 
 
@@ -123,14 +127,22 @@ class MaskEditor(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
+        self._result: RestorationResult | None = None
         self.canvas = MaskCanvas()
-        self.brush_button = QRadioButton("Pincel: marcar dano que faltou")
+        # Textos curtos para a linha de ferramentas caber na aba; a explicação fica na dica.
+        self.brush_button = QRadioButton("Pincel")
+        self.brush_button.setToolTip("Marca um dano que a detecção não pegou. Aparece em ciano.")
         self.brush_button.setChecked(True)
-        self.eraser_button = QRadioButton("Borracha: desmarcar o que não é dano")
+        self.eraser_button = QRadioButton("Borracha")
+        self.eraser_button.setToolTip("Desmarca o que foi marcado por engano. Aparece em azul.")
         self.size_slider = QSlider(Qt.Orientation.Horizontal)
         self.size_slider.setRange(MIN_BRUSH_SIZE, MAX_BRUSH_SIZE)
         self.size_slider.setValue(self.canvas.brush_size)
+        self.size_slider.setMinimumWidth(MIN_SLIDER_WIDTH)
         self.clear_button = QPushButton("Limpar")
+        # Com o mapa de fundo dá para ver o que já foi detectado: o que falta pintar e o que desmarcar.
+        self.damage_checkbox = QCheckBox("Mostrar danos detectados")
+        self.damage_checkbox.setChecked(True)
         self.apply_button = QPushButton("Aplicar correções")
         self.apply_button.setEnabled(False)      # a janela habilita quando há uma foto restaurada
 
@@ -140,6 +152,7 @@ class MaskEditor(QWidget):
         tools.addWidget(QLabel("Tamanho"))
         tools.addWidget(self.size_slider, stretch=1)
         tools.addWidget(self.clear_button)
+        tools.addWidget(self.damage_checkbox)
         tools.addWidget(self.apply_button)
         layout = QVBoxLayout(self)
         layout.addLayout(tools)
@@ -148,3 +161,22 @@ class MaskEditor(QWidget):
         self.eraser_button.toggled.connect(self.canvas.set_erasing)
         self.size_slider.valueChanged.connect(self.canvas.set_brush_size)
         self.clear_button.clicked.connect(self.canvas.clear_masks)
+        self.damage_checkbox.toggled.connect(self._show_background)
+
+    def set_result(self, result: RestorationResult) -> None:
+        """Põe a foto restaurada na área de pintura. A pintura continua se for a mesma foto."""
+        self._result = result
+        self._show_background()
+
+    def clear(self) -> None:
+        """Esvazia a aba: é o que acontece quando outra foto é aberta."""
+        self._result = None
+        self.canvas.clear()
+
+    def _show_background(self) -> None:
+        """Escolhe o fundo da pintura: o mapa de danos ou a foto original, que têm o mesmo tamanho."""
+        if self._result is None:
+            return
+        damage_map = self._result.steps.get(DAMAGE_MAP_STEP)
+        show_damage = self.damage_checkbox.isChecked() and damage_map is not None
+        self.canvas.set_photo(damage_map if show_damage else self._result.original)

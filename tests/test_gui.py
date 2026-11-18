@@ -505,6 +505,64 @@ def test_clearing_the_canvas_removes_the_photo_and_the_strokes(canvas):
     assert not canvas.mask_add.any()            # nada da foto anterior
 
 
+@pytest.fixture
+def editor_with_result(app, three_step_result) -> MaskEditor:
+    """Editor mostrando um resultado em que a foto original é azul e o mapa de danos é verde."""
+    three_step_result.original = solid_photo(BLUE_BGR)
+    editor = MaskEditor()
+    editor.resize(600, 400)
+    editor.set_result(three_step_result)
+    return editor
+
+
+def canvas_color(editor: MaskEditor) -> QColor:
+    """A cor no centro da área de pintura."""
+    canvas = editor.canvas
+    return canvas.grab().toImage().pixelColor(canvas.width() // 2, canvas.height() // 2)
+
+
+def test_editor_paints_over_the_damage_map_until_the_user_hides_it(editor_with_result):
+    with_damage_map = canvas_color(editor_with_result)
+    editor_with_result.damage_checkbox.setChecked(False)
+    without_damage_map = canvas_color(editor_with_result)
+    editor_with_result.damage_checkbox.setChecked(True)
+
+    assert with_damage_map == GREEN
+    assert without_damage_map == BLUE
+    assert canvas_color(editor_with_result) == GREEN
+
+
+def test_switching_the_background_keeps_the_strokes(editor_with_result):
+    canvas = editor_with_result.canvas
+    center = (canvas.width() // 2, canvas.height() // 2)
+    drag(canvas, center, center)
+    painted = canvas.mask_add.copy()
+
+    editor_with_result.damage_checkbox.setChecked(False)
+
+    assert painted.any() and np.array_equal(canvas.mask_add, painted)
+
+
+def test_editor_shows_the_original_when_the_result_has_no_damage_map(app, three_step_result):
+    three_step_result.original = solid_photo(BLUE_BGR)
+    del three_step_result.steps["mapa_de_danos"]
+    editor = MaskEditor()
+    editor.resize(600, 400)
+
+    editor.set_result(three_step_result)
+
+    assert canvas_color(editor) == BLUE
+
+
+def test_cleared_editor_stays_empty_when_the_background_is_switched(editor_with_result):
+    editor_with_result.clear()
+
+    editor_with_result.damage_checkbox.setChecked(False)
+
+    assert editor_with_result.canvas.masks() == (None, None)
+    assert canvas_color(editor_with_result) not in (GREEN, BLUE)
+
+
 def test_editor_tools_drive_the_canvas(app):
     editor = MaskEditor()
     editor.resize(600, 400)
@@ -853,6 +911,39 @@ def test_opening_another_photo_discards_the_painted_masks(restore_calls, window,
 
     assert restore_calls[-1]["mask_add"] is None        # a foto nova foi restaurada sem a pintura da anterior
     assert not window.mask_editor.canvas.mask_add.any()
+
+
+def test_smallest_window_still_fits_the_controls_and_the_mask_tools(window):
+    window.show()
+    window.tabs.setCurrentWidget(window.mask_editor)
+    window.resize(1, 1)                 # o Qt não deixa a janela ficar menor do que o layout precisa
+    QApplication.processEvents()        # deixa o Qt recalcular o layout
+    editor = window.mask_editor
+
+    visible_width = window.controls.visibleRegion().boundingRect().width()
+    assert visible_width == window.controls.width()                         # painel inteiro à vista, sem rolar para o lado
+    assert editor.size_slider.width() >= 80                                 # dá para arrastar
+    assert editor.apply_button.geometry().right() <= editor.width()         # nada fora da aba
+    assert window.width() <= 1024                                           # ainda cabe num projetor antigo
+
+
+def test_mask_tab_shows_what_was_detected_in_the_restored_photo(window, photo_file):
+    window.resize(1000, 700)
+    window.show()
+    window.tabs.setCurrentWidget(window.mask_editor)
+    window.open_photo(photo_file)
+    wait_until(lambda: window.result is not None)
+    canvas = window.mask_editor.canvas
+    left_quarter = (canvas.width() // 4, canvas.height() // 2)      # (50, 50) na foto de 200x100
+
+    with_damage_map = canvas.grab().toImage().pixelColor(*left_quarter)
+    window.mask_editor.damage_checkbox.setChecked(False)
+    without_damage_map = canvas.grab().toImage().pixelColor(*left_quarter)
+
+    blue, green, red = (int(channel) for channel in window.result.steps["mapa_de_danos"][50, 50])
+    assert with_damage_map == QColor(red, green, blue)
+    assert without_damage_map == RED            # a foto original
+    assert with_damage_map != without_damage_map
 
 
 def test_mask_tab_shows_the_restored_photo_ready_to_paint(window, photo_file):

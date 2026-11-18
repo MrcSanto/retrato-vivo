@@ -83,6 +83,10 @@ class MainWindow(QMainWindow):
         scroll = QScrollArea()                          # em tela baixa o painel rola em vez de ser cortado
         scroll.setWidget(self.controls)
         scroll.setWidgetResizable(True)
+        # Largura mínima: a do painel, mais a barra de rolagem vertical e a moldura. Sem isto,
+        # uma aba larga espreme o painel e ele passa a rolar para o lado.
+        scroll.setMinimumWidth(self.controls.sizeHint().width() + scroll.verticalScrollBar().sizeHint().width()
+                               + 2 * scroll.frameWidth())
         dock = QDockWidget("Controles")
         dock.setWidget(scroll)
         dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)    # fixo: não fecha nem destaca
@@ -118,7 +122,7 @@ class MainWindow(QMainWindow):
         self.image, self.photo_path, self.result = image, path, None
         self.compare_view.set_photo(image)
         self.steps_view.clear()
-        self.mask_editor.canvas.clear()      # a pintura era da foto anterior
+        self.mask_editor.clear()             # a pintura era da foto anterior
         self.restore_action.setEnabled(True)
         self.restore_photo()
 
@@ -151,7 +155,7 @@ class MainWindow(QMainWindow):
         self.result = result
         self.compare_view.set_comparison(result.original, result.image)
         self.steps_view.set_result(result)
-        self.mask_editor.canvas.set_photo(result.original)
+        self.mask_editor.set_result(result)
         self._set_busy(False)
         self.statusBar().showMessage(f"{self._photo_label()} · {restoration_summary(result)}")
 
