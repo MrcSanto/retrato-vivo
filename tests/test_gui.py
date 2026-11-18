@@ -479,6 +479,32 @@ def test_overlay_is_transparent_except_where_the_masks_are_painted(app):
     assert added.rgb() != removed.rgb()             # dá para distinguir o pincel da borracha
 
 
+def test_masks_are_handed_out_as_copies(canvas):
+    drag(canvas, (50, 50), (150, 50))
+
+    handed_add, handed_remove = canvas.masks()
+    canvas.clear_masks()        # o usuário continua mexendo depois de pedir a restauração
+
+    assert handed_add[100, 200] == 255          # a cópia entregue não muda
+    assert handed_add.shape == handed_remove.shape == (200, 400)
+    assert not handed_remove.any()
+
+
+def test_canvas_without_photo_hands_out_no_masks(app):
+    assert MaskCanvas().masks() == (None, None)
+
+
+def test_clearing_the_canvas_removes_the_photo_and_the_strokes(canvas):
+    drag(canvas, (50, 50), (150, 50))
+
+    canvas.clear()
+    masks_without_photo = canvas.masks()
+    canvas.set_photo(np.full((200, 400, 3), BLUE_BGR, np.uint8))        # outra foto, por acaso do mesmo tamanho
+
+    assert masks_without_photo == (None, None)
+    assert not canvas.mask_add.any()            # nada da foto anterior
+
+
 def test_editor_tools_drive_the_canvas(app):
     editor = MaskEditor()
     editor.resize(600, 400)
@@ -756,6 +782,77 @@ def test_colorize_control_really_colors_a_gray_photo(window, tmp_path):
     blue, green, red = (window.result.image[..., channel].astype(int) for channel in range(3))
     assert "colorida pela rede" in window.result.notes["colorizacao"]
     assert np.abs(red - blue).max() > 0        # numa foto cinza os três canais seriam iguais
+
+
+@pytest.fixture
+def restore_calls(monkeypatch):
+    """Anota os argumentos nomeados de cada chamada a ``restore()`` e deixa a restauração de verdade acontecer."""
+    calls = []
+    real_restore = worker_module.restore
+
+    def recording_restore(image, config, **options):
+        calls.append(options)
+        return real_restore(image, config, **options)
+
+    monkeypatch.setattr(worker_module, "restore", recording_restore)
+    return calls
+
+
+def paint_on_the_mask_tab(window: MainWindow, x_fraction: float) -> None:
+    """Um clique na área de pintura, na altura do meio e a ``x_fraction`` da largura."""
+    canvas = window.mask_editor.canvas
+    position = (round(canvas.width() * x_fraction), canvas.height() // 2)
+    drag(canvas, position, position)
+
+
+def test_apply_button_restores_again_with_the_painted_masks(restore_calls, window, photo_file):
+    window.resize(1000, 700)
+    window.show()
+    window.tabs.setCurrentWidget(window.mask_editor)
+    window.open_photo(photo_file)
+    wait_until(lambda: window.result is not None)
+    first = window.result
+    canvas = window.mask_editor.canvas
+
+    paint_on_the_mask_tab(window, 0.25)                 # pincel na metade vermelha: (50, 50) na foto
+    window.mask_editor.eraser_button.setChecked(True)
+    paint_on_the_mask_tab(window, 0.75)                 # borracha na metade azul: (150, 50) na foto
+    window.mask_editor.apply_button.click()
+    wait_until(lambda: window.result is not first)
+
+    on_open, on_apply = restore_calls
+    assert on_open["mask_add"] is None and on_open["mask_remove"] is None
+    assert on_apply["mask_add"][50, 50] == 255 and np.array_equal(on_apply["mask_add"], canvas.mask_add)
+    assert on_apply["mask_remove"][50, 150] == 255 and np.array_equal(on_apply["mask_remove"], canvas.mask_remove)
+    assert first.damage.mask[50, 50] == 0               # a detecção automática não tinha marcado ali
+    assert window.result.damage.mask[50, 50] == 255     # agora o reparo passa por onde o usuário pintou
+
+
+def test_apply_button_needs_an_open_photo_and_an_idle_window(window, photo_file):
+    before_any_photo = window.mask_editor.apply_button.isEnabled()
+    window.open_photo(photo_file)
+    while_restoring = window.mask_editor.apply_button.isEnabled()
+    wait_until(lambda: window.result is not None)
+
+    assert not before_any_photo
+    assert not while_restoring
+    assert window.mask_editor.apply_button.isEnabled()
+
+
+def test_opening_another_photo_discards_the_painted_masks(restore_calls, window, photo_file, tmp_path):
+    green_file = save_image(tmp_path / "verde.png", solid_photo(GREEN_BGR))     # do mesmo tamanho da primeira
+    window.resize(1000, 700)
+    window.show()
+    window.tabs.setCurrentWidget(window.mask_editor)
+    window.open_photo(photo_file)
+    wait_until(lambda: window.result is not None)
+    paint_on_the_mask_tab(window, 0.25)
+
+    window.open_photo(green_file)
+    wait_until(lambda: window.result is not None)
+
+    assert restore_calls[-1]["mask_add"] is None        # a foto nova foi restaurada sem a pintura da anterior
+    assert not window.mask_editor.canvas.mask_add.any()
 
 
 def test_mask_tab_shows_the_restored_photo_ready_to_paint(window, photo_file):

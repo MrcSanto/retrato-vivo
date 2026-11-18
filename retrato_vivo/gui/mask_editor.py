@@ -54,6 +54,20 @@ class MaskCanvas(PhotoView):
             self.mask_add = np.zeros(img.shape[:2], np.uint8)
             self.mask_remove = np.zeros(img.shape[:2], np.uint8)
 
+    def masks(self) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """``(mask_add, mask_remove)`` para entregar a ``restore()``. Sem foto, não há máscara: ``(None, None)``.
+
+        São cópias porque a restauração roda em outra thread e o usuário pode continuar pintando.
+        """
+        if self.photo_rect().isEmpty():
+            return None, None
+        return self.mask_add.copy(), self.mask_remove.copy()
+
+    def clear(self) -> None:
+        """Tira a foto e apaga a pintura: é o que acontece quando outra foto é aberta."""
+        super().clear()
+        self.clear_masks()
+
     def set_erasing(self, erasing: bool) -> None:
         self.erasing = erasing
 
@@ -117,6 +131,8 @@ class MaskEditor(QWidget):
         self.size_slider.setRange(MIN_BRUSH_SIZE, MAX_BRUSH_SIZE)
         self.size_slider.setValue(self.canvas.brush_size)
         self.clear_button = QPushButton("Limpar")
+        self.apply_button = QPushButton("Aplicar correções")
+        self.apply_button.setEnabled(False)      # a janela habilita quando há uma foto restaurada
 
         tools = QHBoxLayout()
         tools.addWidget(self.brush_button)
@@ -124,6 +140,7 @@ class MaskEditor(QWidget):
         tools.addWidget(QLabel("Tamanho"))
         tools.addWidget(self.size_slider, stretch=1)
         tools.addWidget(self.clear_button)
+        tools.addWidget(self.apply_button)
         layout = QVBoxLayout(self)
         layout.addLayout(tools)
         layout.addWidget(self.canvas, stretch=1)

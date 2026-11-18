@@ -76,6 +76,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.steps_view, "Etapas")
         self.mask_editor = MaskEditor()
         self.tabs.addTab(self.mask_editor, "Máscara")
+        self.mask_editor.apply_button.clicked.connect(self.restore_photo)
         self.setCentralWidget(self.tabs)
 
         self.controls = ControlsPanel()
@@ -117,6 +118,7 @@ class MainWindow(QMainWindow):
         self.image, self.photo_path, self.result = image, path, None
         self.compare_view.set_photo(image)
         self.steps_view.clear()
+        self.mask_editor.canvas.clear()      # a pintura era da foto anterior
         self.restore_action.setEnabled(True)
         self.restore_photo()
 
@@ -135,8 +137,10 @@ class MainWindow(QMainWindow):
     def restore_photo(self) -> None:
         """Restaura a foto aberta em segundo plano. O resultado chega em ``_show_result``."""
         self._wait_for_worker()
+        mask_add, mask_remove = self.mask_editor.canvas.masks()
         self.worker = RestoreWorker(self.image, self.controls.config(),
-                                    post_stages=self.controls.post_stages())
+                                    post_stages=self.controls.post_stages(),
+                                    mask_add=mask_add, mask_remove=mask_remove)
         self.worker.done.connect(self._show_result)
         self.worker.failed.connect(self._show_failure)
         self._set_busy(True)
@@ -163,6 +167,7 @@ class MainWindow(QMainWindow):
         restaurações ao mesmo tempo poderiam se atrapalhar.
         """
         self.toolbar.setEnabled(not busy)
+        self.mask_editor.apply_button.setEnabled(not busy)
         self.setAcceptDrops(not busy)
         self.progress.setVisible(busy)
 
