@@ -27,7 +27,7 @@ from retrato_vivo.gui.compare_view import CompareView
 from retrato_vivo.gui.controls import ControlsPanel
 from retrato_vivo.gui.convert import fit_rect, to_qimage
 from retrato_vivo.gui.main_window import MainWindow, restoration_summary
-from retrato_vivo.gui.mask_editor import MaskCanvas, MaskEditor, overlay_image
+from retrato_vivo.gui.mask_editor import MAX_UNDO_STEPS, MaskCanvas, MaskEditor, overlay_image
 from retrato_vivo.gui.photo_view import PhotoView
 from retrato_vivo.gui.steps_view import StepsView
 from retrato_vivo.gui.worker import RestoreWorker
@@ -600,6 +600,71 @@ def test_overlay_is_transparent_except_where_the_masks_are_painted(app):
     assert added.rgb() != removed.rgb()             # dá para distinguir o pincel da borracha
 
 
+def test_undo_removes_one_stroke_at_a_time(canvas):
+    drag(canvas, (50, 30), (150, 30))       # primeiro traço: linha 60 da foto
+    drag(canvas, (50, 80), (150, 80))       # segundo traço: linha 160 da foto
+
+    canvas.undo()
+    after_one_undo = (canvas.mask_add[60, 200], canvas.mask_add[160, 200])
+    canvas.undo()
+    after_two_undos = bool(canvas.mask_add.any())
+    canvas.undo()                           # não há mais o que desfazer: não faz nada e não dá erro
+
+    assert after_one_undo == (255, 0)
+    assert not after_two_undos
+    assert not canvas.mask_add.any()
+
+
+def test_undo_restores_what_the_eraser_took_from_the_brush(canvas):
+    drag(canvas, (50, 50), (150, 50))                   # pincel
+    canvas.set_erasing(True)
+    drag(canvas, (100, 20), (100, 80))                  # borracha, cruzando o traço na coluna 200
+
+    canvas.undo()
+
+    assert (canvas.mask_add[100, 200], canvas.mask_remove[100, 200]) == (255, 0)
+    assert not canvas.mask_remove.any()
+
+
+def test_undo_brings_back_what_the_clear_button_erased(canvas):
+    drag(canvas, (50, 50), (150, 50))
+    canvas.clear_masks()
+
+    canvas.undo()
+
+    assert canvas.mask_add[100, 200] == 255
+
+
+def test_undo_never_brings_back_strokes_from_another_photo(canvas):
+    drag(canvas, (50, 50), (150, 50))
+    canvas.clear()                                                      # outra foto foi aberta
+    canvas.set_photo(np.full((200, 400, 3), BLUE_BGR, np.uint8))        # por acaso, do mesmo tamanho
+    canvas.undo()
+    same_size_is_clean = not canvas.mask_add.any()
+
+    drag(canvas, (50, 50), (150, 50))
+    canvas.set_photo(np.full((100, 300, 3), BLUE_BGR, np.uint8))        # agora uma de outro tamanho
+    canvas.undo()
+
+    assert same_size_is_clean
+    assert canvas.mask_add.shape == (100, 300) and not canvas.mask_add.any()
+
+
+def test_undo_goes_back_a_limited_number_of_strokes(canvas):
+    drag(canvas, (10, 20), (10, 80))
+    drag(canvas, (20, 20), (20, 80))
+    after_the_two_oldest_strokes = canvas.mask_add.copy()
+    for stroke in range(MAX_UNDO_STEPS):                # mais traços, até encher o histórico
+        x = 40 + 10 * stroke
+        drag(canvas, (x, 20), (x, 80))
+
+    for _ in range(MAX_UNDO_STEPS + 2):                 # tenta desfazer todos, inclusive os dois mais antigos
+        canvas.undo()
+
+    assert after_the_two_oldest_strokes.any()
+    assert np.array_equal(canvas.mask_add, after_the_two_oldest_strokes)
+
+
 def test_masks_are_handed_out_as_copies(canvas):
     drag(canvas, (50, 50), (150, 50))
 
@@ -682,6 +747,19 @@ def test_cleared_editor_stays_empty_when_the_background_is_switched(editor_with_
 
     assert editor_with_result.canvas.masks() == (None, None)
     assert canvas_color(editor_with_result) not in (GREEN, BLUE)
+
+
+def test_undo_button_undoes_and_answers_to_ctrl_z(app):
+    editor = MaskEditor()
+    editor.resize(700, 400)
+    editor.canvas.set_photo(np.full((200, 400, 3), RED_BGR, np.uint8))
+    center = (editor.canvas.width() // 2, editor.canvas.height() // 2)
+    drag(editor.canvas, center, center)
+
+    editor.undo_button.click()
+
+    assert not editor.canvas.mask_add.any()
+    assert editor.undo_button.shortcut() == QKeySequence(QKeySequence.StandardKey.Undo)
 
 
 def test_editor_tools_drive_the_canvas(app):

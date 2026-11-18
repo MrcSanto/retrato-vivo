@@ -9,10 +9,12 @@ As duas máscaras são ``uint8`` do tamanho de ``result.original``, que é o for
 
 from __future__ import annotations
 
+from collections import deque
+
 import cv2
 import numpy as np
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QImage, QMouseEvent, QPainter, QPaintEvent
+from PySide6.QtGui import QImage, QKeySequence, QMouseEvent, QPainter, QPaintEvent
 from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QPushButton, QRadioButton, QSlider,
                                QVBoxLayout, QWidget)
 
@@ -25,6 +27,8 @@ REMOVE_COLOR = (0, 0, 255)       # RGB azul: não aparece no mapa de danos, ent�
 OVERLAY_ALPHA = 150              # de 0 (invisível) a 255 (cobre a foto)
 DEFAULT_BRUSH_SIZE = 16          # diâmetro do pincel, em pixels da tela
 MIN_BRUSH_SIZE, MAX_BRUSH_SIZE = 2, 80
+# Cada passo guarda uma cópia das duas máscaras: cerca de 6 MB na maior foto que o pipeline aceita.
+MAX_UNDO_STEPS = 10
 MIN_SLIDER_WIDTH = 80            # em pixels da tela: cerca de 1 pixel por tamanho de pincel
 RGBA_CHANNELS = 4
 
@@ -49,14 +53,22 @@ class MaskCanvas(PhotoView):
         self.erasing = False                                  # False: pincel. True: borracha.
         self.brush_size = DEFAULT_BRUSH_SIZE
         self._last_point: tuple[int, int] | None = None       # onde o traço em andamento parou, na foto
+        # Para o desfazer: as máscaras como estavam antes de cada traço. Passou do limite, a mais antiga sai.
+        self._history: deque[tuple[np.ndarray, np.ndarray]] = deque(maxlen=MAX_UNDO_STEPS)
         self.setCursor(Qt.CursorShape.CrossCursor)
 
     def set_photo(self, img: np.ndarray) -> None:
         """Troca a foto de fundo. As máscaras só são mantidas se a foto tiver o mesmo tamanho."""
         super().set_photo(img)
         if self.mask_add.shape != img.shape[:2]:
-            self.mask_add = np.zeros(img.shape[:2], np.uint8)
-            self.mask_remove = np.zeros(img.shape[:2], np.uint8)
+            self._start_empty_masks(img.shape[:2])
+
+    def _start_empty_masks(self, shape: tuple[int, int]) -> None:
+        """Máscaras zeradas e histórico vazio: nada da foto anterior pode voltar com o desfazer."""
+        self.mask_add = np.zeros(shape, np.uint8)
+        self.mask_remove = np.zeros(shape, np.uint8)
+        self._history.clear()
+        self.update()
 
     def masks(self) -> tuple[np.ndarray | None, np.ndarray | None]:
         """``(mask_add, mask_remove)`` para entregar a ``restore()``. Sem foto, não há máscara: ``(None, None)``.
@@ -70,18 +82,31 @@ class MaskCanvas(PhotoView):
     def clear(self) -> None:
         """Tira a foto e apaga a pintura: é o que acontece quando outra foto é aberta."""
         super().clear()
-        self.clear_masks()
+        self._start_empty_masks(self.mask_add.shape)
+
+    def clear_masks(self) -> None:
+        """O botão "Limpar": apaga a pintura, mas dá para voltar atrás com o desfazer."""
+        self._remember()
+        self.mask_add[:] = 0
+        self.mask_remove[:] = 0
+        self.update()
+
+    def undo(self) -> None:
+        """Volta as máscaras para antes do último traço ou do último "Limpar"."""
+        if not self._history:
+            return
+        self.mask_add, self.mask_remove = self._history.pop()
+        self.update()
+
+    def _remember(self) -> None:
+        """Guarda uma cópia das máscaras como estão agora, para o desfazer poder voltar a este ponto."""
+        self._history.append((self.mask_add.copy(), self.mask_remove.copy()))
 
     def set_erasing(self, erasing: bool) -> None:
         self.erasing = erasing
 
     def set_brush_size(self, size: int) -> None:
         self.brush_size = size
-
-    def clear_masks(self) -> None:
-        self.mask_add[:] = 0
-        self.mask_remove[:] = 0
-        self.update()
 
     def paintEvent(self, event: QPaintEvent) -> None:
         super().paintEvent(event)      # a foto
@@ -92,6 +117,7 @@ class MaskCanvas(PhotoView):
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if self.photo_rect().isEmpty():     # sem foto não há onde pintar
             return
+        self._remember()                    # cada traço é um passo do desfazer
         self._last_point = self._photo_point(event.position())
         self._paint_to(self._last_point)    # um clique sem arrastar já deixa um ponto
 
@@ -123,7 +149,7 @@ class MaskCanvas(PhotoView):
 
 
 class MaskEditor(QWidget):
-    """As ferramentas em cima (pincel, borracha, tamanho, limpar) e a área de pintura embaixo."""
+    """As ferramentas em cima (pincel, borracha, tamanho, desfazer, limpar) e a área de pintura embaixo."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -139,6 +165,8 @@ class MaskEditor(QWidget):
         self.size_slider.setRange(MIN_BRUSH_SIZE, MAX_BRUSH_SIZE)
         self.size_slider.setValue(self.canvas.brush_size)
         self.size_slider.setMinimumWidth(MIN_SLIDER_WIDTH)
+        self.undo_button = QPushButton("Desfazer")
+        self.undo_button.setShortcut(QKeySequence.StandardKey.Undo)     # Ctrl+Z
         self.clear_button = QPushButton("Limpar")
         # Com o mapa de fundo dá para ver o que já foi detectado: o que falta pintar e o que desmarcar.
         self.damage_checkbox = QCheckBox("Mostrar danos detectados")
@@ -146,20 +174,26 @@ class MaskEditor(QWidget):
         self.apply_button = QPushButton("Aplicar correções")
         self.apply_button.setEnabled(False)      # a janela habilita quando há uma foto restaurada
 
-        tools = QHBoxLayout()
-        tools.addWidget(self.brush_button)
-        tools.addWidget(self.eraser_button)
-        tools.addWidget(QLabel("Tamanho"))
-        tools.addWidget(self.size_slider, stretch=1)
-        tools.addWidget(self.clear_button)
-        tools.addWidget(self.damage_checkbox)
-        tools.addWidget(self.apply_button)
+        # Duas linhas, para a aba caber em janela estreita: em cima o que pinta, embaixo o que mostra e aplica.
+        painting_tools = QHBoxLayout()
+        painting_tools.addWidget(self.brush_button)
+        painting_tools.addWidget(self.eraser_button)
+        painting_tools.addWidget(QLabel("Tamanho"))
+        painting_tools.addWidget(self.size_slider, stretch=1)
+        painting_tools.addWidget(self.undo_button)
+        painting_tools.addWidget(self.clear_button)
+        view_and_apply = QHBoxLayout()
+        view_and_apply.addWidget(self.damage_checkbox)
+        view_and_apply.addStretch()
+        view_and_apply.addWidget(self.apply_button)
         layout = QVBoxLayout(self)
-        layout.addLayout(tools)
+        layout.addLayout(painting_tools)
+        layout.addLayout(view_and_apply)
         layout.addWidget(self.canvas, stretch=1)
 
         self.eraser_button.toggled.connect(self.canvas.set_erasing)
         self.size_slider.valueChanged.connect(self.canvas.set_brush_size)
+        self.undo_button.clicked.connect(self.canvas.undo)
         self.clear_button.clicked.connect(self.canvas.clear_masks)
         self.damage_checkbox.toggled.connect(self._show_background)
 
