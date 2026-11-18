@@ -47,7 +47,9 @@ Abra com `python -m retrato_vivo.gui`. Para já começar com uma foto, passe o a
 4. **Controles:** no painel da esquerda, mude a sensibilidade, ligue ou desligue correções
    e marque "Colorir foto P&B". Depois clique em "Restaurar".
 5. **Máscara:** com o "Pincel", pinte o dano que a detecção não pegou. Com a "Borracha",
-   desmarque o que foi marcado por engano. "Aplicar correções" refaz a restauração.
+   desmarque o que foi marcado por engano. Gire a roda do mouse para ampliar a foto e
+   arraste com o botão direito para movê-la. O botão "Zoom" volta à foto inteira.
+   "Aplicar correções" refaz a restauração.
 6. **Salvar:** "Salvar resultado" (Ctrl+S) grava a foto restaurada. "Exportar comparativo"
    grava o antes e o depois lado a lado.
 

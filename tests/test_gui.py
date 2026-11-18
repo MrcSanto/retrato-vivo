@@ -13,8 +13,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QEvent, QMimeData, QPointF, QRect, QSize, Qt, QUrl
-from PySide6.QtGui import QColor, QDropEvent, QImage, QKeySequence, QMouseEvent
+from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, QRect, QSize, Qt, QUrl
+from PySide6.QtGui import QColor, QDropEvent, QImage, QKeySequence, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication, QCheckBox, QFileDialog, QLabel, QMessageBox
 
 from retrato_vivo import models
@@ -27,7 +27,7 @@ from retrato_vivo.gui.compare_view import CompareView
 from retrato_vivo.gui.controls import ControlsPanel
 from retrato_vivo.gui.convert import fit_rect, to_qimage
 from retrato_vivo.gui.main_window import MainWindow, restoration_summary
-from retrato_vivo.gui.mask_editor import MAX_UNDO_STEPS, MaskCanvas, MaskEditor, overlay_image
+from retrato_vivo.gui.mask_editor import MAX_UNDO_STEPS, MAX_ZOOM, MaskCanvas, MaskEditor, overlay_image
 from retrato_vivo.gui.photo_view import PhotoView
 from retrato_vivo.gui.steps_view import StepsView
 from retrato_vivo.gui.worker import RestoreWorker
@@ -68,10 +68,17 @@ def solid_photo(bgr: tuple[int, int, int]) -> np.ndarray:
     return np.full((100, 200, 3), bgr, np.uint8)
 
 
-def mouse(kind: QEvent.Type, x: float, y: float) -> QMouseEvent:
-    """Um clique ou arrasto com o botão esquerdo na posição (x, y) do widget."""
-    return QMouseEvent(kind, QPointF(x, y), QPointF(x, y), Qt.MouseButton.LeftButton,
-                       Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+def mouse(kind: QEvent.Type, x: float, y: float,
+          button: Qt.MouseButton = Qt.MouseButton.LeftButton) -> QMouseEvent:
+    """Um clique ou arrasto na posição (x, y) do widget. Sem dizer o botão, é o esquerdo."""
+    return QMouseEvent(kind, QPointF(x, y), QPointF(x, y), button, button, Qt.KeyboardModifier.NoModifier)
+
+
+def wheel(x: float, y: float, notches: float) -> QWheelEvent:
+    """A roda do mouse girada ``notches`` cliques com o cursor em (x, y). Positivo: para a frente."""
+    angle = QPoint(0, round(notches * 120))     # o Qt mede o giro em oitavos de grau: 120 por clique
+    return QWheelEvent(QPointF(x, y), QPointF(x, y), QPoint(), angle, Qt.MouseButton.NoButton,
+                       Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
 
 
 def file_mime(path) -> QMimeData:
@@ -474,11 +481,12 @@ def canvas(app) -> MaskCanvas:
     return canvas
 
 
-def drag(canvas: MaskCanvas, start: tuple[int, int], end: tuple[int, int]) -> None:
+def drag(canvas: MaskCanvas, start: tuple[int, int], end: tuple[int, int],
+         button: Qt.MouseButton = Qt.MouseButton.LeftButton) -> None:
     """Aperta o botão em ``start``, arrasta até ``end`` e solta (posições na tela)."""
-    canvas.mousePressEvent(mouse(PRESS, *start))
-    canvas.mouseMoveEvent(mouse(MOVE, *end))
-    canvas.mouseReleaseEvent(mouse(RELEASE, *end))
+    canvas.mousePressEvent(mouse(PRESS, *start, button))
+    canvas.mouseMoveEvent(mouse(MOVE, *end, button))
+    canvas.mouseReleaseEvent(mouse(RELEASE, *end, button))
 
 
 def test_new_photo_gets_empty_masks_of_its_size(canvas):
@@ -691,6 +699,191 @@ def test_clearing_the_canvas_removes_the_photo_and_the_strokes(canvas):
     assert not canvas.mask_add.any()            # nada da foto anterior
 
 
+WHOLE_PHOTO = QRect(0, 0, 200, 100)     # onde a foto do fixture ``canvas`` fica na tela sem zoom
+RIGHT_BUTTON = Qt.MouseButton.RightButton
+
+
+def test_zoom_enlarges_the_photo_around_the_cursor(canvas):
+    canvas.brush_size = 2
+    canvas.zoom_at(QPointF(50, 25), 2)      # o cursor está sobre o ponto (100, 50) da foto
+
+    drag(canvas, (50, 25), (50, 25))        # o mesmo ponto continua embaixo do cursor
+    drag(canvas, (90, 25), (90, 25))        # agora 1 pixel da tela vale 1 da foto: 40 para a direita
+
+    assert canvas.photo_rect().size() == QSize(400, 200)
+    assert canvas.mask_add[50, 100] == 255
+    assert canvas.mask_add[50, 140] == 255
+    assert canvas.mask_add[50, 180] == 0    # onde o segundo clique cairia sem o zoom
+
+
+def test_wheel_zooms_in_and_out_around_the_cursor(canvas):
+    canvas.wheelEvent(wheel(150, 75, 1))        # um clique da roda para a frente, com o cursor no ponto (300, 150) da foto
+    after_one_notch = canvas.zoom
+    canvas.wheelEvent(wheel(150, 75, 3))
+    drag(canvas, (150, 75), (150, 75))          # pinta onde o cursor está
+    canvas.wheelEvent(wheel(150, 75, -4))       # os quatro cliques de volta
+
+    assert after_one_notch > 1
+    assert canvas.mask_add[150, 300] == 255     # o mesmo ponto da foto continuou embaixo do cursor
+    assert canvas.zoom == pytest.approx(1)
+    assert canvas.photo_rect() == WHOLE_PHOTO
+
+
+@pytest.mark.parametrize("area", [QSize(203, 100), QSize(200, 103)])
+def test_without_zoom_the_photo_sits_exactly_where_the_photo_view_fits_it(canvas, area):
+    canvas.resize(area)         # sobram 3 pixels de margem: o arredondamento tem de ser o mesmo do encaixe
+
+    assert canvas.photo_rect() == PhotoView.photo_rect(canvas)
+
+
+def test_small_wheel_movements_zoom_less_than_a_whole_notch(canvas):
+    canvas.wheelEvent(wheel(100, 50, 0.25))     # o touchpad manda o giro em frações de clique
+    after_a_quarter_notch = canvas.zoom
+    canvas.reset_zoom()
+    canvas.wheelEvent(wheel(100, 50, 1))
+
+    assert 1 < after_a_quarter_notch < canvas.zoom
+
+
+def test_zoom_stops_at_the_whole_photo_and_at_the_maximum(canvas):
+    canvas.wheelEvent(wheel(30, 30, -3))        # já mostra a foto inteira: não reduz mais
+    at_the_minimum = (canvas.zoom, canvas.photo_rect())
+    for _ in range(50):
+        canvas.wheelEvent(wheel(30, 30, 1))
+
+    assert at_the_minimum == (1, WHOLE_PHOTO)
+    assert canvas.zoom == MAX_ZOOM
+    assert canvas.photo_rect().width() == 200 * MAX_ZOOM
+
+
+def test_zooming_all_the_way_out_shows_the_whole_photo_again(canvas):
+    canvas.zoom_at(QPointF(0, 0), 4)            # amplia num canto...
+    canvas.zoom_at(QPointF(200, 100), 1 / 4)    # ...e reduz com o cursor no canto oposto
+
+    assert canvas.photo_rect() == WHOLE_PHOTO
+
+
+def test_wheel_over_an_empty_canvas_does_nothing(app):
+    canvas = MaskCanvas()
+    canvas.resize(200, 100)
+
+    canvas.wheelEvent(wheel(100, 50, 2))
+
+    assert canvas.zoom == 1
+
+
+def test_zoomed_canvas_draws_only_the_enlarged_part(canvas):
+    canvas.set_photo(red_and_blue_photo())      # 200x100: metade vermelha, metade azul
+    blue_before = pixels_of_another_color(screenshot(canvas), RED_RGB)
+
+    canvas.zoom_at(QPointF(0, 50), 4)           # amplia na borda esquerda: só cabe na tela um pedaço da metade vermelha
+
+    assert blue_before > 0
+    assert pixels_of_another_color(screenshot(canvas), RED_RGB) == 0
+
+
+def test_strokes_stay_over_the_photo_when_it_is_zoomed(canvas):
+    drag(canvas, (100, 50), (100, 50))          # um ponto no centro da foto
+    canvas.zoom_at(QPointF(0, 0), 2)            # o centro da foto vai para o canto de baixo da tela
+
+    shot = canvas.grab().toImage()
+    assert shot.pixelColor(195, 95) != RED      # o ponto pintado acompanhou a foto
+    assert shot.pixelColor(100, 50) == RED      # e saiu de onde estava na tela
+
+
+def test_right_button_drag_moves_the_zoomed_photo_without_painting(canvas):
+    canvas.set_photo(red_and_blue_photo())
+    canvas.zoom_at(QPointF(100, 50), 2)         # em volta do centro: vermelho à esquerda, azul à direita
+    right_side_before = canvas.grab().toImage().pixelColor(150, 50)
+
+    drag(canvas, (50, 50), (150, 50), RIGHT_BUTTON)     # puxa a foto 100 pixels para a direita
+
+    assert right_side_before == BLUE
+    assert canvas.grab().toImage().pixelColor(150, 50) == RED       # a metade vermelha veio junto
+    assert not canvas.mask_add.any() and not canvas.mask_remove.any()
+
+
+def test_dragging_the_zoomed_photo_follows_the_mouse_until_the_button_is_released(canvas):
+    canvas.zoom_at(QPointF(100, 50), 2)         # a foto ampliada começa em x = -100
+    canvas.mousePressEvent(mouse(PRESS, 150, 50, RIGHT_BUTTON))
+    canvas.mouseMoveEvent(mouse(MOVE, 140, 50, RIGHT_BUTTON))
+    canvas.mouseMoveEvent(mouse(MOVE, 130, 50, RIGHT_BUTTON))
+    while_dragging = canvas.photo_rect().left()
+    canvas.mouseReleaseEvent(mouse(RELEASE, 130, 50, RIGHT_BUTTON))
+    canvas.mouseMoveEvent(mouse(MOVE, 60, 50, Qt.MouseButton.NoButton))     # o mouse passeando depois de soltar
+
+    assert while_dragging == -120               # 20 pixels para a esquerda, os mesmos que o mouse andou
+    assert canvas.photo_rect().left() == -120
+
+
+def test_zoomed_photo_cannot_be_dragged_out_of_the_area(canvas):
+    canvas.zoom_at(QPointF(100, 50), 2)
+    drag(canvas, (0, 0), (900, 900), RIGHT_BUTTON)      # muito além do que a foto tem para mostrar
+    dragged_right_and_down = canvas.photo_rect()
+    drag(canvas, (100, 50), (90, 50), RIGHT_BUTTON)     # voltar 10 pixels responde na hora
+    back_ten_pixels = canvas.photo_rect().left()
+    drag(canvas, (0, 0), (-900, -900), RIGHT_BUTTON)
+
+    assert dragged_right_and_down == QRect(0, 0, 400, 200)          # parou com o canto de cima da foto no canto da área
+    assert back_ten_pixels == -10
+    assert canvas.photo_rect() == QRect(-200, -100, 400, 200)       # e com o canto de baixo no canto de baixo
+
+
+def test_zoomed_photo_stays_centered_in_the_direction_it_still_fits(canvas):
+    canvas.resize(400, 100)                     # a foto ocupa de x=100 a x=300: sobra margem dos dois lados
+    canvas.zoom_at(QPointF(200, 50), 1.5)       # 300 pixels de largura: ainda cabe nos 400 da área
+
+    drag(canvas, (200, 50), (350, 80), RIGHT_BUTTON)
+
+    assert canvas.photo_rect() == QRect(50, 0, 300, 150)    # no meio na horizontal; na vertical foi até o limite
+
+
+def test_shrinking_the_area_keeps_the_zoomed_photo_covering_it(canvas):
+    canvas.resize(400, 200)
+    canvas.show()                               # o Qt só avisa da mudança de tamanho a quem está na tela
+    canvas.zoom_at(QPointF(0, 0), 2)            # o canto de cima da foto fica no canto da área
+
+    canvas.resize(200, 100)
+    QApplication.processEvents()
+
+    assert canvas.photo_rect() == QRect(0, 0, 400, 200)     # continua no canto, sem área vazia antes da foto
+
+
+def test_brush_keeps_its_size_on_screen_so_zoom_gives_finer_strokes(canvas):
+    canvas.zoom_at(QPointF(100, 50), 2)         # em volta do centro: o ponto (200, 100) da foto continua lá
+
+    drag(canvas, (100, 50), (100, 50))          # pincel de 10 pixels na tela: agora 10 na foto, em vez de 20
+
+    assert canvas.mask_add[100, 200] == 255
+    assert canvas.mask_add[100, 204] == 255
+    assert canvas.mask_add[100, 208] == 0       # sem zoom o ponto chegaria até aqui
+
+
+def test_reset_zoom_shows_the_whole_photo_again(canvas):
+    canvas.zoom_at(QPointF(0, 0), 4)
+
+    canvas.reset_zoom()
+
+    assert canvas.zoom == 1
+    assert canvas.photo_rect() == WHOLE_PHOTO
+
+
+def test_zoom_survives_a_new_result_but_not_another_photo(canvas):
+    canvas.zoom_at(QPointF(0, 0), 4)
+    canvas.set_photo(np.full((200, 400, 3), BLUE_BGR, np.uint8))        # a mesma foto restaurada de novo
+    after_the_same_photo = canvas.zoom
+    canvas.set_photo(np.full((100, 300, 3), BLUE_BGR, np.uint8))        # outra foto, de outro tamanho
+    after_another_size = canvas.zoom
+    canvas.zoom_at(QPointF(0, 0), 4)
+    canvas.clear()                                                      # outra foto foi aberta...
+    canvas.set_photo(np.full((100, 300, 3), BLUE_BGR, np.uint8))        # ...por acaso do mesmo tamanho
+
+    assert after_the_same_photo == 4
+    assert after_another_size == 1
+    assert canvas.zoom == 1
+    assert canvas.photo_rect() == PhotoView.photo_rect(canvas)          # a foto inteira, encaixada na área
+
+
 @pytest.fixture
 def editor_with_result(app, three_step_result) -> MaskEditor:
     """Editor mostrando um resultado em que a foto original é azul e o mapa de danos é verde."""
@@ -760,6 +953,36 @@ def test_undo_button_undoes_and_answers_to_ctrl_z(app):
 
     assert not editor.canvas.mask_add.any()
     assert editor.undo_button.shortcut() == QKeySequence(QKeySequence.StandardKey.Undo)
+
+
+@pytest.fixture
+def zoomed_editor(app) -> MaskEditor:
+    """Editor com uma foto ampliada até o máximo pela roda do mouse."""
+    editor = MaskEditor()
+    editor.resize(700, 400)
+    editor.canvas.set_photo(np.full((200, 400, 3), RED_BGR, np.uint8))
+    editor.canvas.wheelEvent(wheel(10, 10, 20))
+    return editor
+
+
+def test_zoom_button_shows_the_zoom_and_goes_back_to_the_whole_photo(zoomed_editor):
+    text_when_zoomed = zoomed_editor.zoom_button.text()
+
+    zoomed_editor.zoom_button.click()
+
+    assert text_when_zoomed == "Zoom 800%"
+    assert zoomed_editor.canvas.zoom == 1
+    assert zoomed_editor.zoom_button.text() == "Zoom 100%"
+
+
+def test_zoom_button_goes_back_to_100_when_another_photo_is_opened(zoomed_editor):
+    zoomed_editor.clear()
+
+    assert zoomed_editor.zoom_button.text() == "Zoom 100%"
+
+
+def test_new_editor_shows_the_zoom_at_100(app):
+    assert MaskEditor().zoom_button.text() == "Zoom 100%"
 
 
 def test_editor_tools_drive_the_canvas(app):
