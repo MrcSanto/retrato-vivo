@@ -18,13 +18,14 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMessageBox
 from retrato_vivo import models
 from retrato_vivo.gui import worker as worker_module
 from retrato_vivo.gui.compare_view import CompareView
+from retrato_vivo.gui.controls import ControlsPanel
 from retrato_vivo.gui.convert import fit_rect, to_qimage
 from retrato_vivo.gui.main_window import MainWindow, restoration_summary
 from retrato_vivo.gui.photo_view import PhotoView
 from retrato_vivo.gui.steps_view import StepsView
 from retrato_vivo.gui.worker import RestoreWorker
 from retrato_vivo.io_utils import save_image
-from retrato_vivo.pipeline import STEP_INFO, restore
+from retrato_vivo.pipeline import STEP_INFO, RestorationConfig, restore
 
 RED_BGR, GREEN_BGR, BLUE_BGR = (0, 0, 255), (0, 255, 0), (255, 0, 0)     # o OpenCV guarda os canais como azul, verde, vermelho
 RED, GREEN, BLUE = QColor(255, 0, 0), QColor(0, 255, 0), QColor(0, 0, 255)
@@ -332,12 +333,86 @@ def test_cleared_steps_view_shows_nothing(steps_view):
     assert photo_color(steps_view) not in (RED, GREEN, BLUE)
 
 
+# =============================================================== controls.py
+
+def test_untouched_controls_give_the_default_configuration(app):
+    assert ControlsPanel().config() == RestorationConfig()
+
+
+@pytest.mark.parametrize("slider, position, read_field, expected", [
+    ("sensitivity", 60, lambda cfg: cfg.damage.sensitivity, 0.6),
+    ("denoise_strength", 150, lambda cfg: cfg.preprocess.denoise_strength, 1.5),
+    ("clahe_strength", 70, lambda cfg: cfg.preprocess.clahe_strength, 0.7),
+    ("sharpen_amount", 90, lambda cfg: cfg.preprocess.sharpen_amount, 0.9),
+])
+def test_each_slider_sets_its_field_in_hundredths(app, slider, position, read_field, expected):
+    panel = ControlsPanel()
+
+    getattr(panel, slider).setValue(position)
+
+    assert read_field(panel.config()) == expected
+
+
+@pytest.mark.parametrize("checkbox, read_field", [
+    ("detect_scratches", lambda cfg: cfg.damage.detect_scratches),
+    ("detect_creases", lambda cfg: cfg.damage.detect_creases),
+    ("detect_spots", lambda cfg: cfg.damage.detect_spots),
+    ("detect_large_losses", lambda cfg: cfg.damage.detect_large_losses),
+    ("protect_faces", lambda cfg: cfg.damage.protect_faces),
+    ("remove_color_cast", lambda cfg: cfg.preprocess.remove_color_cast),
+    ("auto_levels", lambda cfg: cfg.preprocess.auto_levels),
+    ("denoise", lambda cfg: cfg.preprocess.denoise),
+    ("clahe", lambda cfg: cfg.preprocess.clahe),
+    ("sharpen", lambda cfg: cfg.preprocess.sharpen),
+])
+def test_each_checkbox_switches_its_field(app, checkbox, read_field):
+    panel = ControlsPanel()
+    default = read_field(RestorationConfig())
+
+    getattr(panel, checkbox).setChecked(not default)
+
+    assert read_field(panel.config()) == (not default)
+    assert panel.config() != RestorationConfig()
+
+
+def test_fill_method_can_be_switched_to_navier_stokes(app):
+    panel = ControlsPanel()
+
+    panel.inpaint_method.setCurrentIndex(1)
+
+    assert panel.config().inpaint_method == "ns"
+
+
+def test_sliders_stop_at_the_limits_the_pipeline_documents(app):
+    panel = ControlsPanel()
+
+    for slider in (panel.sensitivity, panel.denoise_strength, panel.clahe_strength, panel.sharpen_amount):
+        slider.setValue(100_000)         # o slider para no próprio máximo
+    cfg = panel.config()
+
+    assert (cfg.damage.sensitivity, cfg.preprocess.denoise_strength,
+            cfg.preprocess.clahe_strength, cfg.preprocess.sharpen_amount) == (1.0, 2.0, 1.0, 1.0)
+
+
 # ================================================================= worker.py
+
+def test_worker_restores_with_the_given_configuration(app):
+    without_sharpening = RestorationConfig()
+    without_sharpening.preprocess.sharpen = False
+    results = []
+    worker = RestoreWorker(red_and_blue_photo(), without_sharpening)
+    worker.done.connect(results.append)
+
+    worker.run()
+
+    assert "nitidez" not in results[0].steps
+    assert "clahe" in results[0].steps          # as outras etapas continuam
+
 
 def test_worker_emits_the_restored_photo(app):
     photo = red_and_blue_photo()
     results = []
-    worker = RestoreWorker(photo)
+    worker = RestoreWorker(photo, RestorationConfig())
     worker.done.connect(results.append)
 
     worker.run()        # chamado direto, sem thread: o sinal chega na mesma hora
@@ -349,7 +424,7 @@ def test_worker_emits_the_restored_photo(app):
 
 def test_worker_reports_the_error_instead_of_dying(app, broken_restore):
     results, errors = [], []
-    worker = RestoreWorker(red_and_blue_photo())
+    worker = RestoreWorker(red_and_blue_photo(), RestorationConfig())
     worker.done.connect(results.append)
     worker.failed.connect(errors.append)
 
@@ -398,6 +473,19 @@ def test_status_bar_shows_the_summary_after_restoring(window, photo_file):
 def status_bar_notes(window: MainWindow) -> list[str]:
     """Os textos fixos da barra de status (os que não somem quando a mensagem muda)."""
     return [label.text() for label in window.statusBar().findChildren(QLabel)]
+
+
+def test_restore_button_applies_the_current_controls(window, photo_file):
+    window.open_photo(photo_file)
+    wait_until(lambda: window.result is not None)
+    with_defaults = window.result
+
+    window.controls.sharpen.setChecked(False)
+    window.restore_action.trigger()
+    wait_until(lambda: window.result is not with_defaults)
+
+    assert "nitidez" in with_defaults.steps
+    assert "nitidez" not in window.result.steps
 
 
 def test_steps_tab_follows_the_open_photo(window, photo_file, tmp_path):

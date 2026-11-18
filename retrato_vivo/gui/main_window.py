@@ -5,14 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent, QKeySequence
-from PySide6.QtWidgets import (QFileDialog, QLabel, QMainWindow, QMessageBox, QProgressBar,
-                               QTabWidget)
+from PySide6.QtWidgets import (QDockWidget, QFileDialog, QLabel, QMainWindow, QMessageBox,
+                               QProgressBar, QScrollArea, QTabWidget)
 
 from .. import models
 from ..io_utils import SUPPORTED_EXTENSIONS, load_image
 from ..pipeline import RestorationResult
 from .compare_view import CompareView
+from .controls import ControlsPanel
 from .steps_view import StepsView
 from .worker import RestoreWorker
 
@@ -73,6 +75,15 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.steps_view, "Etapas")
         self.setCentralWidget(self.tabs)
 
+        self.controls = ControlsPanel()
+        scroll = QScrollArea()                          # em tela baixa o painel rola em vez de ser cortado
+        scroll.setWidget(self.controls)
+        scroll.setWidgetResizable(True)
+        dock = QDockWidget("Controles")
+        dock.setWidget(scroll)
+        dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)    # fixo: não fecha nem destaca
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)                    # sem faixa, a barra só anima: "ocupado"
         self.progress.setMaximumWidth(160)
@@ -121,7 +132,7 @@ class MainWindow(QMainWindow):
     def restore_photo(self) -> None:
         """Restaura a foto aberta em segundo plano. O resultado chega em ``_show_result``."""
         self._wait_for_worker()
-        self.worker = RestoreWorker(self.image)
+        self.worker = RestoreWorker(self.image, self.controls.config())
         self.worker.done.connect(self._show_result)
         self.worker.failed.connect(self._show_failure)
         self._set_busy(True)
