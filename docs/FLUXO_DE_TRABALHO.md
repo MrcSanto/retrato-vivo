@@ -219,20 +219,22 @@ Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
 
 ### 6.3 Marcos Paulo de Medeiros: interface gráfica (GUI)
 
-**Status: ⏳ não iniciado.** Pasta: `retrato_vivo/gui/`. Vale 1,0 ponto ("qualidade da
+**Status: 🔄 base pronta e testada (18/11): itens 1, 2, 3 e 8. Faltam etapas, controles,
+editor de máscara e salvar.** Pasta: `retrato_vivo/gui/`. Vale 1,0 ponto ("qualidade da
 interface e desempenho"), e é por ela que o professor vai testar com fotos dele.
 
-**Sugestão de framework:** **PySide6** (Qt): visual profissional, threads e
-arrastar-e-soltar prontos. Adicionar `PySide6` ao `requirements.txt`. Ponto de entrada:
-`python -m retrato_vivo.gui`.
+**Framework:** **PySide6** (Qt): visual profissional, threads e arrastar-e-soltar prontos.
+No `requirements.txt` entrou o `PySide6-Essentials`, que traz só QtCore, QtGui e QtWidgets.
+Ponto de entrada: `python -m retrato_vivo.gui [foto]`. Testes em `tests/test_gui.py`, que
+rodam sem tela.
 
 **Funcionalidades, em ordem de prioridade:**
 
-1. Abrir imagem (botão + **arrastar e soltar**), com todos os formatos de
+1. ✅ Abrir imagem (botão + **arrastar e soltar**), com todos os formatos de
    `io_utils.SUPPORTED_EXTENSIONS`. Carregar **sempre** via `load_image`.
-2. Botão "Restaurar", chamando `restore()` numa **`QThread`** (a interface não pode travar) e
+2. ✅ Botão "Restaurar", chamando `restore()` numa **`QThread`** (a interface não pode travar) e
    mostrando uma barra de progresso.
-3. **Comparação antes/depois com slider** arrastável sobre a imagem.
+3. ✅ **Comparação antes/depois com slider** arrastável sobre a imagem.
 4. Lista ou abas com **cada etapa** (`res.steps`), com o título e a descrição de
    `STEP_INFO` e a frase de `res.notes` ("ruído medido 0,7: foto limpa, etapa pulada").
    É isso que mostra o "processamento de imagens claro" que o enunciado pede.
@@ -244,7 +246,7 @@ arrastar-e-soltar prontos. Adicionar `PySide6` ao `requirements.txt`. Ponto de e
    `steps["mapa_de_danos"]` como camada. É essencial: resolve os casos que a detecção
    automática não pega.
 7. Salvar resultado, mais "exportar comparativo" (`visualize.side_by_side`).
-8. Barra de status com `res.damage.stats` e `res.timings_ms`.
+8. ✅ Barra de status com `res.damage.stats` e `res.timings_ms`.
 9. Abas dos extras (ver seção 7).
 
 **Também é responsabilidade do Marcos Paulo:** README final (prints e link do vídeo) e
