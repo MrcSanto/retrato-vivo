@@ -25,6 +25,7 @@ from retrato_vivo.gui.compare_view import CompareView
 from retrato_vivo.gui.controls import ControlsPanel
 from retrato_vivo.gui.convert import fit_rect, to_qimage
 from retrato_vivo.gui.main_window import MainWindow, restoration_summary
+from retrato_vivo.gui.mask_editor import MaskCanvas, MaskEditor, overlay_image
 from retrato_vivo.gui.photo_view import PhotoView
 from retrato_vivo.gui.steps_view import StepsView
 from retrato_vivo.gui.worker import RestoreWorker
@@ -337,6 +338,167 @@ def test_cleared_steps_view_shows_nothing(steps_view):
     assert photo_color(steps_view) not in (RED, GREEN, BLUE)
 
 
+# ============================================================ mask_editor.py
+
+PRESS, MOVE, RELEASE = QEvent.Type.MouseButtonPress, QEvent.Type.MouseMove, QEvent.Type.MouseButtonRelease
+
+
+@pytest.fixture
+def canvas(app) -> MaskCanvas:
+    """Área de pintura 200x100 mostrando uma foto vermelha de 400x200: cada pixel da tela vale 2 da foto."""
+    canvas = MaskCanvas()
+    canvas.resize(200, 100)
+    canvas.set_photo(np.full((200, 400, 3), RED_BGR, np.uint8))
+    canvas.brush_size = 10      # na tela; na foto o traço fica com 20 pixels de largura
+    return canvas
+
+
+def drag(canvas: MaskCanvas, start: tuple[int, int], end: tuple[int, int]) -> None:
+    """Aperta o botão em ``start``, arrasta até ``end`` e solta (posições na tela)."""
+    canvas.mousePressEvent(mouse(PRESS, *start))
+    canvas.mouseMoveEvent(mouse(MOVE, *end))
+    canvas.mouseReleaseEvent(mouse(RELEASE, *end))
+
+
+def test_new_photo_gets_empty_masks_of_its_size(canvas):
+    for mask in (canvas.mask_add, canvas.mask_remove):
+        assert mask.shape == (200, 400) and mask.dtype == np.uint8
+        assert not mask.any()
+
+
+def test_brush_stroke_marks_mask_add_under_the_mouse(canvas):
+    drag(canvas, (50, 50), (150, 50))       # na foto: da coluna 100 à 300, na linha 100
+
+    assert canvas.mask_add[100, 100] == canvas.mask_add[100, 200] == canvas.mask_add[100, 300] == 255
+    assert canvas.mask_add[106, 200] == 255         # dentro da largura do traço
+    assert canvas.mask_add[130, 200] == 0           # fora dela
+    assert canvas.mask_add[100, 350] == 0           # depois do fim do traço
+    assert not canvas.mask_remove.any()
+
+
+def test_eraser_stroke_marks_mask_remove_instead(canvas):
+    canvas.set_erasing(True)
+
+    drag(canvas, (50, 50), (150, 50))
+
+    assert canvas.mask_remove[100, 200] == 255
+    assert not canvas.mask_add.any()
+
+
+def test_each_tool_undoes_the_other_where_they_cross(canvas):
+    drag(canvas, (50, 50), (150, 50))                   # pincel
+    canvas.set_erasing(True)
+    drag(canvas, (100, 20), (100, 80))                  # borracha, cruzando o traço na coluna 200
+    crossing_after_eraser = (canvas.mask_add[100, 200], canvas.mask_remove[100, 200])
+    canvas.set_erasing(False)
+    drag(canvas, (50, 50), (150, 50))                   # pincel de novo, por cima
+    crossing_after_brush = (canvas.mask_add[100, 200], canvas.mask_remove[100, 200])
+
+    assert crossing_after_eraser == (0, 255)
+    assert crossing_after_brush == (255, 0)
+    assert canvas.mask_add[100, 120] == 255             # longe do cruzamento, o primeiro traço continua
+
+
+def test_click_without_dragging_paints_a_dot_of_the_brush_size(canvas):
+    canvas.mousePressEvent(mouse(PRESS, 100, 50))       # na foto: (200, 100); o ponto tem raio 10
+    canvas.mouseReleaseEvent(mouse(RELEASE, 100, 50))
+
+    assert canvas.mask_add[100, 200] == 255
+    assert canvas.mask_add[100, 206] == 255
+    assert canvas.mask_add[100, 216] == 0
+
+
+def test_bigger_brush_paints_a_wider_stroke(canvas):
+    canvas.set_brush_size(30)       # na foto: 60 pixels de largura
+
+    drag(canvas, (50, 50), (150, 50))
+
+    assert canvas.mask_add[125, 200] == 255
+    assert canvas.mask_add[140, 200] == 0
+
+
+def test_moving_the_mouse_after_releasing_paints_nothing(canvas):
+    drag(canvas, (50, 50), (60, 50))
+
+    canvas.mouseMoveEvent(mouse(MOVE, 180, 90))
+
+    assert canvas.mask_add[180, 360] == 0
+
+
+def test_stroke_follows_the_photo_when_it_has_side_margins(canvas):
+    canvas.resize(400, 100)         # a foto fica de x=100 a x=300 na tela, com 2 pixels da foto por pixel
+
+    canvas.mousePressEvent(mouse(PRESS, 150, 50))       # 50 pixels de tela depois da borda da foto
+    canvas.mouseReleaseEvent(mouse(RELEASE, 150, 50))
+
+    assert canvas.mask_add[100, 100] == 255
+    assert canvas.mask_add[100, 300] == 0
+
+
+def test_clearing_empties_both_masks(canvas):
+    drag(canvas, (50, 50), (150, 50))
+    canvas.set_erasing(True)
+    drag(canvas, (50, 80), (150, 80))
+
+    canvas.clear_masks()
+
+    assert not canvas.mask_add.any() and not canvas.mask_remove.any()
+
+
+def test_strokes_are_drawn_over_the_photo(canvas):
+    drag(canvas, (50, 50), (150, 50))
+
+    shot = canvas.grab().toImage()
+    assert shot.pixelColor(100, 50) != RED          # o traço, por cima do vermelho
+    assert shot.pixelColor(100, 85) == RED          # fora do traço, a foto intacta
+
+
+def test_same_size_photo_keeps_the_strokes_and_another_size_resets_them(canvas):
+    drag(canvas, (50, 50), (150, 50))
+
+    canvas.set_photo(np.full((200, 400, 3), BLUE_BGR, np.uint8))        # a mesma foto restaurada de novo
+    kept = bool(canvas.mask_add.any())
+    canvas.set_photo(np.full((100, 300, 3), BLUE_BGR, np.uint8))        # outra foto
+
+    assert kept
+    assert canvas.mask_add.shape == canvas.mask_remove.shape == (100, 300)
+    assert not canvas.mask_add.any()
+
+
+def test_overlay_is_transparent_except_where_the_masks_are_painted(app):
+    mask_add, mask_remove = np.zeros((2, 3), np.uint8), np.zeros((2, 3), np.uint8)
+    mask_add[0, 0] = 255
+    mask_remove[1, 2] = 255
+
+    overlay = overlay_image(mask_add, mask_remove)
+
+    assert (overlay.width(), overlay.height()) == (3, 2)
+    assert overlay.pixelColor(1, 0).alpha() == 0
+    added, removed = overlay.pixelColor(0, 0), overlay.pixelColor(2, 1)
+    assert added.alpha() > 0 and removed.alpha() > 0
+    assert added.rgb() != removed.rgb()             # dá para distinguir o pincel da borracha
+
+
+def test_editor_tools_drive_the_canvas(app):
+    editor = MaskEditor()
+    editor.resize(600, 400)
+    editor.canvas.set_photo(np.full((200, 400, 3), RED_BGR, np.uint8))
+    center = (editor.canvas.width() // 2, editor.canvas.height() // 2)
+
+    editor.eraser_button.setChecked(True)
+    drag(editor.canvas, center, center)
+    erased = bool(editor.canvas.mask_remove.any())
+    editor.brush_button.setChecked(True)
+    editor.size_slider.setValue(40)
+    drag(editor.canvas, center, center)
+    painted, brush_size = bool(editor.canvas.mask_add.any()), editor.canvas.brush_size
+    editor.clear_button.click()
+
+    assert erased and painted
+    assert brush_size == 40
+    assert not editor.canvas.mask_add.any() and not editor.canvas.mask_remove.any()
+
+
 # =============================================================== controls.py
 
 def test_untouched_controls_give_the_default_configuration(app):
@@ -594,6 +756,23 @@ def test_colorize_control_really_colors_a_gray_photo(window, tmp_path):
     blue, green, red = (window.result.image[..., channel].astype(int) for channel in range(3))
     assert "colorida pela rede" in window.result.notes["colorizacao"]
     assert np.abs(red - blue).max() > 0        # numa foto cinza os três canais seriam iguais
+
+
+def test_mask_tab_shows_the_restored_photo_ready_to_paint(window, photo_file):
+    tab_titles = [window.tabs.tabText(index) for index in range(window.tabs.count())]
+    window.resize(1000, 700)
+    window.show()
+    window.tabs.setCurrentWidget(window.mask_editor)
+
+    window.open_photo(photo_file)
+    wait_until(lambda: window.result is not None)
+    canvas = window.mask_editor.canvas
+    center = (canvas.width() // 2, canvas.height() // 2)
+    drag(canvas, center, center)
+
+    assert "Máscara" in tab_titles
+    assert canvas.mask_add.shape == window.result.original.shape[:2]
+    assert canvas.mask_add[50, 100] == 255          # o centro da foto de 200x100
 
 
 def test_steps_tab_follows_the_open_photo(window, photo_file, tmp_path):

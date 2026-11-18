@@ -15,6 +15,7 @@ from ..io_utils import SUPPORTED_EXTENSIONS, load_image
 from ..pipeline import RestorationResult
 from .compare_view import CompareView
 from .controls import ControlsPanel
+from .mask_editor import MaskEditor
 from .steps_view import StepsView
 from .worker import RestoreWorker
 
@@ -73,6 +74,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.compare_view, "Antes e depois")
         self.steps_view = StepsView()
         self.tabs.addTab(self.steps_view, "Etapas")
+        self.mask_editor = MaskEditor()
+        self.tabs.addTab(self.mask_editor, "Máscara")
         self.setCentralWidget(self.tabs)
 
         self.controls = ControlsPanel()
@@ -144,6 +147,7 @@ class MainWindow(QMainWindow):
         self.result = result
         self.compare_view.set_comparison(result.original, result.image)
         self.steps_view.set_result(result)
+        self.mask_editor.canvas.set_photo(result.original)
         self._set_busy(False)
         self.statusBar().showMessage(f"{self._photo_label()} · {restoration_summary(result)}")
 
