@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import QRect, Qt
-from PySide6.QtGui import QImage, QMouseEvent, QPainter, QPaintEvent, QPen
+from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPaintEvent, QPen
 
 from .convert import to_qimage
 from .photo_view import PhotoView
 
-DIVIDER_WIDTH = 2   # em pixels da tela
+# Medidas em pixels da tela.
+DIVIDER_WIDTH = 2               # o traço branco
+DIVIDER_OUTLINE_WIDTH = 4       # o traço escuro por baixo, que faz o divisor aparecer em área clara
+LABEL_MARGIN = 10               # do rótulo até a borda do lado da foto a que ele se refere
+LABEL_PADDING = 6               # do texto até a borda do fundo do rótulo
+LABEL_BACKGROUND = QColor(0, 0, 0, 150)     # preto meio transparente
 
 
 class CompareView(PhotoView):
@@ -36,15 +41,37 @@ class CompareView(PhotoView):
             return
         photo = self.photo_rect()
         divider_x = photo.left() + round(self.split * photo.width())
+        before_side = QRect(photo.left(), photo.top(), divider_x - photo.left(), photo.height())
+        after_side = QRect(divider_x, photo.top(), photo.right() - divider_x + 1, photo.height())
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         # A original é desenhada por cima da restaurada, mas o recorte só deixa passar
         # o que está à esquerda do divisor.
-        painter.setClipRect(QRect(photo.left(), photo.top(), divider_x - photo.left(), photo.height()))
+        painter.setClipRect(before_side)
         painter.drawImage(photo, self._before)
         painter.setClipping(False)
-        painter.setPen(QPen(Qt.GlobalColor.white, DIVIDER_WIDTH))
-        painter.drawLine(divider_x, photo.top(), divider_x, photo.bottom())
+
+        for color, width in ((Qt.GlobalColor.black, DIVIDER_OUTLINE_WIDTH), (Qt.GlobalColor.white, DIVIDER_WIDTH)):
+            painter.setPen(QPen(color, width))
+            painter.drawLine(divider_x, photo.top(), divider_x, photo.bottom())
+        self._draw_label(painter, "Antes", before_side, Qt.AlignmentFlag.AlignLeft)
+        self._draw_label(painter, "Depois", after_side, Qt.AlignmentFlag.AlignRight)
+
+    def _draw_label(self, painter: QPainter, text: str, side: QRect, corner: Qt.AlignmentFlag) -> None:
+        """Escreve ``text`` no canto de cima de ``side``. Se o lado ficou estreito demais, não escreve."""
+        metrics = painter.fontMetrics()
+        box = QRect(0, 0, metrics.horizontalAdvance(text) + 2 * LABEL_PADDING,
+                    metrics.height() + 2 * LABEL_PADDING)
+        if box.width() + 2 * LABEL_MARGIN > side.width():
+            return
+        if corner == Qt.AlignmentFlag.AlignLeft:
+            box.moveTopLeft(side.topLeft() + QPoint(LABEL_MARGIN, LABEL_MARGIN))
+        else:
+            box.moveTopRight(side.topRight() + QPoint(-LABEL_MARGIN, LABEL_MARGIN))
+        painter.fillRect(box, LABEL_BACKGROUND)
+        painter.setPen(Qt.GlobalColor.white)
+        painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         self._move_divider_to(event.position().x())

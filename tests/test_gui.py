@@ -36,7 +36,9 @@ from retrato_vivo.pipeline import STEP_INFO, RestorationConfig, restore
 from retrato_vivo.visualize import side_by_side
 
 RED_BGR, GREEN_BGR, BLUE_BGR = (0, 0, 255), (0, 255, 0), (255, 0, 0)     # o OpenCV guarda os canais como azul, verde, vermelho
+WHITE_BGR = (255, 255, 255)
 RED, GREEN, BLUE = QColor(255, 0, 0), QColor(0, 255, 0), QColor(0, 0, 255)
+RED_RGB, GREEN_RGB, BLUE_RGB = (255, 0, 0), (0, 255, 0), (0, 0, 255)     # para comparar com capturas de tela
 
 
 @pytest.fixture(scope="module")
@@ -212,12 +214,21 @@ def test_photo_view_draws_the_photo_centered_keeping_proportion(app):
     assert shot.pixelColor(50, 10) not in (RED, BLUE)      # acima da foto: só o fundo
 
 
-def distinct_colors(widget) -> int:
-    """Quantas cores diferentes aparecem no widget. Uma só quer dizer que ele está em branco."""
+def screenshot(widget) -> np.ndarray:
+    """O que o widget mostra, como array (altura, largura, 3) em RGB."""
     image = widget.grab().toImage().convertToFormat(QImage.Format.Format_RGB888)
     rows = np.frombuffer(image.constBits(), np.uint8).reshape(image.height(), image.bytesPerLine())
-    pixels = rows[:, :image.width() * 3].reshape(-1, 3)
-    return len(np.unique(pixels, axis=0))
+    return rows[:, :image.width() * 3].reshape(image.height(), image.width(), 3).copy()
+
+
+def distinct_colors(widget) -> int:
+    """Quantas cores diferentes aparecem no widget. Uma só quer dizer que ele está em branco."""
+    return len(np.unique(screenshot(widget).reshape(-1, 3), axis=0))
+
+
+def pixels_of_another_color(region: np.ndarray, expected_rgb: tuple[int, int, int]) -> int:
+    """Quantos pixels da região não têm a cor esperada."""
+    return int((region != expected_rgb).any(axis=-1).sum())
 
 
 def test_empty_photo_view_shows_its_placeholder_text_until_a_photo_arrives(app):
@@ -299,6 +310,54 @@ def test_divider_follows_the_mouse_when_the_photo_has_side_margins(red_before_bl
     assert shot.pixelColor(120, 50) == RED
     assert shot.pixelColor(200, 50) == BLUE
     assert shot.pixelColor(50, 50) not in (RED, BLUE)       # margem: só o fundo
+
+
+def test_compare_view_labels_each_side_at_the_top(red_before_blue_after):
+    shot = screenshot(red_before_blue_after)        # 200x100: "antes" vermelho à esquerda, "depois" azul à direita
+
+    assert pixels_of_another_color(shot[:45, :95], RED_RGB) > 0         # rótulo "Antes"
+    assert pixels_of_another_color(shot[:45, 105:], BLUE_RGB) > 0       # rótulo "Depois"
+    assert pixels_of_another_color(shot[55:, :95], RED_RGB) == 0        # o resto da foto fica livre
+    assert pixels_of_another_color(shot[55:, 105:], BLUE_RGB) == 0
+
+
+def test_label_disappears_when_its_side_gets_too_narrow(red_before_blue_after):
+    view = red_before_blue_after
+
+    view.mousePressEvent(mouse(QEvent.Type.MouseButtonPress, 20, 50))      # sobra uma faixa de 20 pixels de "antes"
+
+    shot = screenshot(view)
+    assert pixels_of_another_color(shot[:45, :17], RED_RGB) == 0        # sem rótulo "Antes" na faixa estreita
+    assert pixels_of_another_color(shot[:45, 24:110], BLUE_RGB) == 0    # e ele não invade o lado do "depois"
+    assert pixels_of_another_color(shot[:45, 110:], BLUE_RGB) > 0       # "Depois" continua lá
+
+
+def test_after_label_also_disappears_when_its_side_gets_too_narrow(red_before_blue_after):
+    view = red_before_blue_after
+
+    view.mousePressEvent(mouse(QEvent.Type.MouseButtonPress, 180, 50))     # sobra uma faixa de 20 pixels de "depois"
+
+    shot = screenshot(view)
+    assert pixels_of_another_color(shot[:45, 184:], BLUE_RGB) == 0      # sem rótulo "Depois" na faixa estreita
+    assert pixels_of_another_color(shot[:45, 90:176], RED_RGB) == 0     # e ele não invade o lado do "antes"
+    assert pixels_of_another_color(shot[:45, :90], RED_RGB) > 0         # "Antes" continua lá
+
+
+def test_divider_shows_even_over_a_white_photo(app):
+    view = CompareView()
+    view.resize(200, 100)
+    view.set_comparison(solid_photo(WHITE_BGR), solid_photo(WHITE_BGR))
+
+    row = screenshot(view)[70]          # uma linha da foto abaixo dos rótulos
+
+    assert row[95:105].min() < 100                                      # há um traço escuro junto ao divisor
+    assert (row[:95] == 255).all() and (row[105:] == 255).all()         # e só ali
+
+
+def test_single_photo_has_no_labels_and_no_divider(red_before_blue_after):
+    red_before_blue_after.set_photo(solid_photo(GREEN_BGR))
+
+    assert pixels_of_another_color(screenshot(red_before_blue_after), GREEN_RGB) == 0
 
 
 def test_showing_a_single_photo_ends_the_comparison(red_before_blue_after):
