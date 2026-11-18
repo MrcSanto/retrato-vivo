@@ -12,15 +12,17 @@ import numpy as np
 import pytest
 from PySide6.QtCore import QEvent, QMimeData, QPointF, QRect, QSize, Qt, QUrl
 from PySide6.QtGui import QColor, QDropEvent, QMouseEvent
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMessageBox
 
+from retrato_vivo import models
 from retrato_vivo.gui import worker as worker_module
 from retrato_vivo.gui.compare_view import CompareView
 from retrato_vivo.gui.convert import fit_rect, to_qimage
-from retrato_vivo.gui.main_window import MainWindow
+from retrato_vivo.gui.main_window import MainWindow, restoration_summary
 from retrato_vivo.gui.photo_view import PhotoView
 from retrato_vivo.gui.worker import RestoreWorker
 from retrato_vivo.io_utils import save_image
+from retrato_vivo.pipeline import restore
 
 RED_BGR, GREEN_BGR, BLUE_BGR = (0, 0, 255), (0, 255, 0), (255, 0, 0)     # o OpenCV guarda os canais como azul, verde, vermelho
 RED, GREEN, BLUE = QColor(255, 0, 0), QColor(0, 255, 0), QColor(0, 0, 255)
@@ -260,6 +262,51 @@ def test_worker_reports_the_error_instead_of_dying(app, broken_restore):
 
 def test_new_window_shows_a_hint_in_the_status_bar(window):
     assert window.statusBar().currentMessage() != ""
+
+
+def test_restoration_summary_lists_damage_faces_and_time():
+    result = restore(red_and_blue_photo())
+    result.damage.stats = {"riscos": 13.0, "vincos": 6.0, "manchas": 77.0,
+                           "area_danificada_pct": 2.341, "rostos_protegidos": 2.0}
+    result.timings_ms = {"detectar_danos": 400.0, "inpainting": 190.5}
+
+    summary = restoration_summary(result)
+
+    for expected in ("riscos: 13", "vincos: 6", "manchas: 77", "área danificada: 2,34%",
+                     "rostos protegidos: 2", "tempo: 0,59 s"):
+        assert expected in summary
+
+
+def test_restoration_summary_without_damage_detection_shows_only_the_time():
+    result = restore(red_and_blue_photo())
+    result.damage = None
+    result.timings_ms = {"abrir": 20.0, "realce": 1230.0}
+
+    assert restoration_summary(result) == "tempo: 1,25 s"
+
+
+def test_status_bar_shows_the_summary_after_restoring(window, photo_file):
+    window.open_photo(photo_file)
+    wait_until(lambda: window.result is not None)
+
+    message = window.statusBar().currentMessage()
+    assert "vovó.png" in message
+    assert restoration_summary(window.result) in message
+
+
+def status_bar_notes(window: MainWindow) -> list[str]:
+    """Os textos fixos da barra de status (os que não somem quando a mensagem muda)."""
+    return [label.text() for label in window.statusBar().findChildren(QLabel)]
+
+
+def test_window_tells_how_to_download_a_missing_face_model(app, monkeypatch):
+    monkeypatch.setattr(models, "is_available", lambda name: name != "yunet")
+    without_model = MainWindow()
+    monkeypatch.setattr(models, "is_available", lambda name: True)
+    with_model = MainWindow()
+
+    assert any("python -m retrato_vivo modelos" in note for note in status_bar_notes(without_model))
+    assert status_bar_notes(with_model) == []
 
 
 def test_opening_a_photo_shows_it_and_names_it_in_the_status_bar(window, photo_file):

@@ -6,8 +6,10 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent, QKeySequence
-from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QProgressBar, QTabWidget
+from PySide6.QtWidgets import (QFileDialog, QLabel, QMainWindow, QMessageBox, QProgressBar,
+                               QTabWidget)
 
+from .. import models
 from ..io_utils import SUPPORTED_EXTENSIONS, load_image
 from ..pipeline import RestorationResult
 from .compare_view import CompareView
@@ -17,6 +19,31 @@ from .worker import RestoreWorker
 # (AVIF, HEIC) e fotos salvas com a extensão errada.
 OPEN_FILTER = ("Imagens (" + " ".join(f"*{ext}" for ext in SUPPORTED_EXTENSIONS)
                + ");;Todos os arquivos (*)")
+
+
+FACE_MODEL = "yunet"    # o nome que faces.py usa no registro de modelos
+
+
+def restoration_summary(result: RestorationResult) -> str:
+    """Resumo para a barra de status: os danos encontrados e o tempo total."""
+    seconds = sum(result.timings_ms.values()) / 1000
+    time_note = f"tempo: {_decimal(seconds)} s"
+    if result.damage is None:      # reparo de danos desligado na configuração
+        return time_note
+    stats = result.damage.stats
+    return " · ".join([
+        f"riscos: {stats['riscos']:.0f}",
+        f"vincos: {stats['vincos']:.0f}",
+        f"manchas: {stats['manchas']:.0f}",
+        f"área danificada: {_decimal(stats['area_danificada_pct'])}%",
+        f"rostos protegidos: {stats['rostos_protegidos']:.0f}",
+        time_note,
+    ])
+
+
+def _decimal(value: float) -> str:
+    """Número com duas casas e vírgula decimal, como se escreve em português."""
+    return f"{value:.2f}".replace(".", ",")
 
 
 class MainWindow(QMainWindow):
@@ -47,6 +74,10 @@ class MainWindow(QMainWindow):
         self.progress.setRange(0, 0)                    # sem faixa, a barra só anima: "ocupado"
         self.progress.setMaximumWidth(160)
         self.progress.hide()
+        if not models.is_available(FACE_MODEL):
+            # Sem o modelo o pipeline funciona, mas não protege os rostos na detecção de danos.
+            self.statusBar().addPermanentWidget(
+                QLabel("Detector de rostos não baixado. Rode: python -m retrato_vivo modelos"))
         self.statusBar().addPermanentWidget(self.progress)
         self.statusBar().showMessage("Abra uma foto ou arraste o arquivo para a janela.")
 
@@ -97,7 +128,7 @@ class MainWindow(QMainWindow):
         self.result = result
         self.compare_view.set_comparison(result.original, result.image)
         self._set_busy(False)
-        self.statusBar().showMessage(f"{self._photo_label()} · restaurada")
+        self.statusBar().showMessage(f"{self._photo_label()} · {restoration_summary(result)}")
 
     def _show_failure(self, message: str) -> None:
         self._set_busy(False)
