@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QProgressBa
 
 from ..io_utils import SUPPORTED_EXTENSIONS, load_image
 from ..pipeline import RestorationResult
-from .photo_view import PhotoView
+from .compare_view import CompareView
 from .worker import RestoreWorker
 
 # "Todos os arquivos" existe porque load_image também abre formatos fora da lista
@@ -38,9 +38,9 @@ class MainWindow(QMainWindow):
         self.restore_action = self.toolbar.addAction("Restaurar", self.restore_photo)
         self.restore_action.setEnabled(False)           # só faz sentido com uma foto aberta
 
-        self.photo_view = PhotoView()
+        self.compare_view = CompareView()
         self.tabs = QTabWidget()
-        self.tabs.addTab(self.photo_view, "Antes e depois")
+        self.tabs.addTab(self.compare_view, "Antes e depois")
         self.setCentralWidget(self.tabs)
 
         self.progress = QProgressBar()
@@ -67,7 +67,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Não foi possível abrir a foto", str(error))
             return
         self.image, self.photo_path, self.result = image, path, None
-        self.photo_view.set_photo(image)
+        self.compare_view.set_photo(image)
         self.restore_action.setEnabled(True)
         self.restore_photo()
 
@@ -95,7 +95,7 @@ class MainWindow(QMainWindow):
 
     def _show_result(self, result: RestorationResult) -> None:
         self.result = result
-        self.photo_view.set_photo(result.image)
+        self.compare_view.set_comparison(result.original, result.image)
         self._set_busy(False)
         self.statusBar().showMessage(f"{self._photo_label()} · restaurada")
 

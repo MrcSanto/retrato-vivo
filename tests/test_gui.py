@@ -10,19 +10,20 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QMimeData, QPointF, QRect, QSize, Qt, QUrl
-from PySide6.QtGui import QColor, QDropEvent
+from PySide6.QtCore import QEvent, QMimeData, QPointF, QRect, QSize, Qt, QUrl
+from PySide6.QtGui import QColor, QDropEvent, QMouseEvent
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from retrato_vivo.gui import worker as worker_module
+from retrato_vivo.gui.compare_view import CompareView
 from retrato_vivo.gui.convert import fit_rect, to_qimage
 from retrato_vivo.gui.main_window import MainWindow
 from retrato_vivo.gui.photo_view import PhotoView
 from retrato_vivo.gui.worker import RestoreWorker
 from retrato_vivo.io_utils import save_image
 
-RED_BGR, BLUE_BGR = (0, 0, 255), (255, 0, 0)     # o OpenCV guarda os canais como azul, verde, vermelho
-RED, BLUE = QColor(255, 0, 0), QColor(0, 0, 255)
+RED_BGR, GREEN_BGR, BLUE_BGR = (0, 0, 255), (0, 255, 0), (255, 0, 0)     # o OpenCV guarda os canais como azul, verde, vermelho
+RED, GREEN, BLUE = QColor(255, 0, 0), QColor(0, 255, 0), QColor(0, 0, 255)
 
 
 @pytest.fixture(scope="module")
@@ -45,6 +46,17 @@ def red_and_blue_photo() -> np.ndarray:
     img[:, :100] = RED_BGR
     img[:, 100:] = BLUE_BGR
     return img
+
+
+def solid_photo(bgr: tuple[int, int, int]) -> np.ndarray:
+    """Foto 200x100 de uma cor só."""
+    return np.full((100, 200, 3), bgr, np.uint8)
+
+
+def mouse(kind: QEvent.Type, x: float, y: float) -> QMouseEvent:
+    """Um clique ou arrasto com o botão esquerdo na posição (x, y) do widget."""
+    return QMouseEvent(kind, QPointF(x, y), QPointF(x, y), Qt.MouseButton.LeftButton,
+                       Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
 
 
 def file_mime(path) -> QMimeData:
@@ -84,11 +96,20 @@ def broken_restore(monkeypatch):
     monkeypatch.setattr(worker_module, "restore", failing_restore)
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def warnings(monkeypatch):
-    """Troca a caixa de aviso (que travaria o teste esperando um clique) por uma lista de textos."""
+    """Troca a caixa de aviso por uma lista com os textos mostrados.
+
+    Vale para todos os testes: a caixa de verdade fica esperando um clique, e um
+    aviso inesperado deixaria o teste parado para sempre em vez de falhar.
+    """
     shown = []
-    monkeypatch.setattr(QMessageBox, "warning", lambda parent, title, text: shown.append(text))
+
+    def record(parent, title, text):
+        print(f"aviso mostrado: {text}")      # o pytest exibe isto quando o teste falha
+        shown.append(text)
+
+    monkeypatch.setattr(QMessageBox, "warning", record)
     return shown
 
 
@@ -141,6 +162,71 @@ def test_photo_view_draws_the_photo_centered_keeping_proportion(app):
     assert shot.pixelColor(50, 100) == RED
     assert shot.pixelColor(150, 100) == BLUE
     assert shot.pixelColor(50, 10) not in (RED, BLUE)      # acima da foto: só o fundo
+
+
+# =========================================================== compare_view.py
+
+@pytest.fixture
+def red_before_blue_after(app) -> CompareView:
+    """Comparador 200x100 com o "antes" todo vermelho e o "depois" todo azul. O divisor começa no meio."""
+    view = CompareView()
+    view.resize(200, 100)
+    view.set_comparison(solid_photo(RED_BGR), solid_photo(BLUE_BGR))
+    return view
+
+
+def test_compare_view_shows_before_on_the_left_and_after_on_the_right(red_before_blue_after):
+    shot = red_before_blue_after.grab().toImage()
+
+    assert shot.pixelColor(50, 50) == RED
+    assert shot.pixelColor(150, 50) == BLUE
+
+
+def test_clicking_and_dragging_moves_the_divider(red_before_blue_after):
+    view = red_before_blue_after
+
+    view.mousePressEvent(mouse(QEvent.Type.MouseButtonPress, 40, 50))
+    after_click = view.grab().toImage()
+    view.mouseMoveEvent(mouse(QEvent.Type.MouseMove, 160, 50))
+    after_drag = view.grab().toImage()
+
+    assert after_click.pixelColor(20, 50) == RED and after_click.pixelColor(60, 50) == BLUE
+    assert after_drag.pixelColor(140, 50) == RED and after_drag.pixelColor(180, 50) == BLUE
+
+
+def test_divider_stops_at_the_photo_edges(red_before_blue_after):
+    view = red_before_blue_after
+
+    view.mouseMoveEvent(mouse(QEvent.Type.MouseMove, 500, 50))      # muito além da borda direita
+    split_at_right, all_before = view.split, view.grab().toImage()
+    view.mouseMoveEvent(mouse(QEvent.Type.MouseMove, -500, 50))     # muito além da borda esquerda
+    split_at_left, all_after = view.split, view.grab().toImage()
+
+    assert (split_at_right, split_at_left) == (1.0, 0.0)            # o divisor não sai de cima da foto
+    assert all_before.pixelColor(10, 50) == RED and all_before.pixelColor(190, 50) == RED
+    assert all_after.pixelColor(10, 50) == BLUE and all_after.pixelColor(190, 50) == BLUE
+
+
+def test_divider_follows_the_mouse_when_the_photo_has_side_margins(red_before_blue_after):
+    view = red_before_blue_after
+    view.resize(400, 100)       # a foto 200x100 fica centralizada, de x=100 a x=300
+
+    view.mousePressEvent(mouse(QEvent.Type.MouseButtonPress, 150, 50))
+
+    shot = view.grab().toImage()
+    assert shot.pixelColor(120, 50) == RED
+    assert shot.pixelColor(200, 50) == BLUE
+    assert shot.pixelColor(50, 50) not in (RED, BLUE)       # margem: só o fundo
+
+
+def test_showing_a_single_photo_ends_the_comparison(red_before_blue_after):
+    view = red_before_blue_after
+
+    view.set_photo(solid_photo(GREEN_BGR))
+
+    shot = view.grab().toImage()
+    assert shot.pixelColor(50, 50) == GREEN
+    assert shot.pixelColor(150, 50) == GREEN
 
 
 # ================================================================= worker.py
@@ -269,28 +355,44 @@ def test_opening_a_photo_restores_it_in_the_background(window, photo_file):
 
 
 def test_opening_another_photo_discards_the_previous_result(window, photo_file, tmp_path):
-    other_file = save_image(tmp_path / "outra.png", two_pixel_photo())
+    green_file = save_image(tmp_path / "verde.png", solid_photo(GREEN_BGR))
     window.open_photo(photo_file)
     wait_until(lambda: window.result is not None)
 
-    window.open_photo(other_file)
+    window.open_photo(green_file)
 
     assert window.result is None        # o resultado antigo era de outra foto
     wait_until(lambda: window.result is not None)
-    assert window.result.original.shape == two_pixel_photo().shape
+    assert np.array_equal(window.result.original, solid_photo(GREEN_BGR))
 
 
-def test_restored_photo_replaces_the_original_on_screen(window, photo_file):
+def test_after_restoring_the_screen_compares_original_and_restored(window, photo_file):
     window.show()
     window.open_photo(photo_file)
     wait_until(lambda: window.result is not None)
 
     view = window.tabs.currentWidget()
-    on_screen = view.grab().toImage().pixelColor(view.width() // 4, view.height() // 2)
+    shot = view.grab().toImage()
+    left = shot.pixelColor(view.width() // 4, view.height() // 2)
+    right = shot.pixelColor(3 * view.width() // 4, view.height() // 2)
 
-    blue, green, red = (int(channel) for channel in window.result.image[50, 50])
-    assert on_screen == QColor(red, green, blue)
-    assert on_screen != RED         # o pipeline altera as cores desta foto
+    blue, green, red = (int(channel) for channel in window.result.image[50, 150])
+    assert left == RED                              # a original, intacta
+    assert right == QColor(red, green, blue)        # a restaurada
+    assert right != BLUE                            # o pipeline altera as cores desta foto
+
+
+def test_opening_another_photo_ends_the_previous_comparison(window, photo_file, tmp_path):
+    green_file = save_image(tmp_path / "verde.png", solid_photo(GREEN_BGR))
+    window.show()
+    window.open_photo(photo_file)
+    wait_until(lambda: window.result is not None)
+
+    window.open_photo(green_file)
+
+    view = window.tabs.currentWidget()
+    shot = view.grab().toImage()
+    assert shot.pixelColor(view.width() // 4, view.height() // 2) == GREEN     # nada da foto anterior
 
 
 def test_window_is_busy_while_restoring_and_free_afterwards(window, photo_file):
