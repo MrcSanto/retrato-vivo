@@ -13,6 +13,7 @@ from .. import models
 from ..io_utils import SUPPORTED_EXTENSIONS, load_image
 from ..pipeline import RestorationResult
 from .compare_view import CompareView
+from .steps_view import StepsView
 from .worker import RestoreWorker
 
 # "Todos os arquivos" existe porque load_image também abre formatos fora da lista
@@ -68,6 +69,8 @@ class MainWindow(QMainWindow):
         self.compare_view = CompareView()
         self.tabs = QTabWidget()
         self.tabs.addTab(self.compare_view, "Antes e depois")
+        self.steps_view = StepsView()
+        self.tabs.addTab(self.steps_view, "Etapas")
         self.setCentralWidget(self.tabs)
 
         self.progress = QProgressBar()
@@ -99,6 +102,7 @@ class MainWindow(QMainWindow):
             return
         self.image, self.photo_path, self.result = image, path, None
         self.compare_view.set_photo(image)
+        self.steps_view.clear()
         self.restore_action.setEnabled(True)
         self.restore_photo()
 
@@ -127,6 +131,7 @@ class MainWindow(QMainWindow):
     def _show_result(self, result: RestorationResult) -> None:
         self.result = result
         self.compare_view.set_comparison(result.original, result.image)
+        self.steps_view.set_result(result)
         self._set_busy(False)
         self.statusBar().showMessage(f"{self._photo_label()} · {restoration_summary(result)}")
 

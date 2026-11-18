@@ -3,6 +3,7 @@
 Rodam sem tela: a plataforma "offscreen" do Qt desenha as janelas na memória.
 """
 
+import dataclasses
 import os
 import time
 
@@ -20,9 +21,10 @@ from retrato_vivo.gui.compare_view import CompareView
 from retrato_vivo.gui.convert import fit_rect, to_qimage
 from retrato_vivo.gui.main_window import MainWindow, restoration_summary
 from retrato_vivo.gui.photo_view import PhotoView
+from retrato_vivo.gui.steps_view import StepsView
 from retrato_vivo.gui.worker import RestoreWorker
 from retrato_vivo.io_utils import save_image
-from retrato_vivo.pipeline import restore
+from retrato_vivo.pipeline import STEP_INFO, restore
 
 RED_BGR, GREEN_BGR, BLUE_BGR = (0, 0, 255), (0, 255, 0), (255, 0, 0)     # o OpenCV guarda os canais como azul, verde, vermelho
 RED, GREEN, BLUE = QColor(255, 0, 0), QColor(0, 255, 0), QColor(0, 0, 255)
@@ -166,6 +168,16 @@ def test_photo_view_draws_the_photo_centered_keeping_proportion(app):
     assert shot.pixelColor(50, 10) not in (RED, BLUE)      # acima da foto: só o fundo
 
 
+def test_photo_view_can_be_emptied(app):
+    view = PhotoView()
+    view.resize(200, 100)
+    view.set_photo(solid_photo(RED_BGR))
+
+    view.clear()
+
+    assert view.grab().toImage().pixelColor(100, 50) != RED
+
+
 # =========================================================== compare_view.py
 
 @pytest.fixture
@@ -229,6 +241,95 @@ def test_showing_a_single_photo_ends_the_comparison(red_before_blue_after):
     shot = view.grab().toImage()
     assert shot.pixelColor(50, 50) == GREEN
     assert shot.pixelColor(150, 50) == GREEN
+
+
+# ============================================================= steps_view.py
+
+@pytest.fixture
+def three_step_result():
+    """Resultado de verdade, com as etapas trocadas por fotos de uma cor só, fáceis de reconhecer na tela."""
+    result = restore(red_and_blue_photo())
+    result.steps = {"original": solid_photo(RED_BGR), "mapa_de_danos": solid_photo(GREEN_BGR),
+                    "etapa_nova": solid_photo(BLUE_BGR)}
+    result.notes = {"mapa_de_danos": "8 riscos, 5 vincos", "ruido_removido": "pulada: foto limpa"}
+    result.timings_ms = {"diagnostico": 57.4, "detectar_danos": 206.0}
+    return result
+
+
+@pytest.fixture
+def steps_view(app, three_step_result) -> StepsView:
+    view = StepsView()
+    view.resize(600, 400)
+    view.set_result(three_step_result)
+    return view
+
+
+def photo_color(view: StepsView) -> QColor:
+    """A cor no centro da foto que a aba está mostrando."""
+    return view.photo.grab().toImage().pixelColor(view.photo.width() // 2, view.photo.height() // 2)
+
+
+def listed_titles(view: StepsView) -> list[str]:
+    return [view.step_list.item(row).text() for row in range(view.step_list.count())]
+
+
+def test_steps_view_lists_the_applied_steps_and_starts_at_the_first(steps_view):
+    known_titles = [STEP_INFO["original"][0], STEP_INFO["mapa_de_danos"][0]]
+
+    assert listed_titles(steps_view) == [*known_titles, "etapa nova"]     # etapa fora de STEP_INFO: o próprio nome
+    assert photo_color(steps_view) == RED
+
+
+def test_selecting_a_step_shows_its_photo_description_and_note(steps_view):
+    steps_view.step_list.setCurrentRow(1)
+
+    assert photo_color(steps_view) == GREEN
+    assert STEP_INFO["mapa_de_danos"][1] in steps_view.caption.text()
+    assert "8 riscos, 5 vincos" in steps_view.caption.text()
+
+
+def test_step_without_description_or_note_has_an_empty_caption(steps_view):
+    steps_view.step_list.setCurrentRow(2)
+
+    assert photo_color(steps_view) == BLUE
+    assert steps_view.caption.text() == ""
+
+
+def test_redoing_the_restoration_keeps_the_selected_step(steps_view, three_step_result):
+    steps_view.step_list.setCurrentRow(1)
+
+    steps_view.set_result(three_step_result)
+
+    assert steps_view.step_list.currentRow() == 1
+    assert photo_color(steps_view) == GREEN
+
+
+def test_selection_returns_to_the_first_step_when_the_selected_one_is_gone(steps_view, three_step_result):
+    steps_view.step_list.setCurrentRow(2)
+    first_two_steps = dict(list(three_step_result.steps.items())[:2])
+    result_without_the_selected_step = dataclasses.replace(three_step_result, steps=first_two_steps)
+
+    steps_view.set_result(result_without_the_selected_step)
+
+    assert steps_view.step_list.currentRow() == 0
+    assert photo_color(steps_view) == RED
+
+
+def test_footer_explains_skipped_steps_and_shows_the_time_of_each_phase(steps_view):
+    footer = steps_view.footer.text()
+
+    assert f"{STEP_INFO['ruido_removido'][0]}: pulada: foto limpa" in footer
+    assert "8 riscos, 5 vincos" not in footer       # nota de etapa aplicada fica na legenda da etapa
+    assert "diagnostico 57 ms" in footer
+    assert "detectar danos 206 ms" in footer
+
+
+def test_cleared_steps_view_shows_nothing(steps_view):
+    steps_view.clear()
+
+    assert listed_titles(steps_view) == []
+    assert steps_view.caption.text() == "" and steps_view.footer.text() == ""
+    assert photo_color(steps_view) not in (RED, GREEN, BLUE)
 
 
 # ================================================================= worker.py
@@ -297,6 +398,22 @@ def test_status_bar_shows_the_summary_after_restoring(window, photo_file):
 def status_bar_notes(window: MainWindow) -> list[str]:
     """Os textos fixos da barra de status (os que não somem quando a mensagem muda)."""
     return [label.text() for label in window.statusBar().findChildren(QLabel)]
+
+
+def test_steps_tab_follows_the_open_photo(window, photo_file, tmp_path):
+    green_file = save_image(tmp_path / "verde.png", solid_photo(GREEN_BGR))
+    tab_titles = [window.tabs.tabText(index) for index in range(window.tabs.count())]
+
+    window.open_photo(photo_file)
+    wait_until(lambda: window.result is not None)
+    restored_steps = len(window.result.steps)
+    listed_after_restoring = window.steps_view.step_list.count()
+    window.open_photo(green_file)
+    listed_right_after_opening_another = window.steps_view.step_list.count()
+
+    assert "Etapas" in tab_titles
+    assert listed_after_restoring == restored_steps > 0
+    assert listed_right_after_opening_another == 0      # as etapas antigas eram de outra foto
 
 
 def test_window_tells_how_to_download_a_missing_face_model(app, monkeypatch):
