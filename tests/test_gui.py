@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 import pytest
 from PySide6.QtCore import QEvent, QMimeData, QPointF, QRect, QSize, Qt, QUrl
-from PySide6.QtGui import QColor, QDropEvent, QKeySequence, QMouseEvent
+from PySide6.QtGui import QColor, QDropEvent, QImage, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import QApplication, QCheckBox, QFileDialog, QLabel, QMessageBox
 
 from retrato_vivo import models
@@ -210,6 +210,30 @@ def test_photo_view_draws_the_photo_centered_keeping_proportion(app):
     assert shot.pixelColor(50, 100) == RED
     assert shot.pixelColor(150, 100) == BLUE
     assert shot.pixelColor(50, 10) not in (RED, BLUE)      # acima da foto: só o fundo
+
+
+def distinct_colors(widget) -> int:
+    """Quantas cores diferentes aparecem no widget. Uma só quer dizer que ele está em branco."""
+    image = widget.grab().toImage().convertToFormat(QImage.Format.Format_RGB888)
+    rows = np.frombuffer(image.constBits(), np.uint8).reshape(image.height(), image.bytesPerLine())
+    pixels = rows[:, :image.width() * 3].reshape(-1, 3)
+    return len(np.unique(pixels, axis=0))
+
+
+def test_empty_photo_view_shows_its_placeholder_text_until_a_photo_arrives(app):
+    blank, with_text = PhotoView(), PhotoView()
+    for view in (blank, with_text):
+        view.resize(300, 100)
+    with_text.placeholder = "Arraste uma foto para cá"
+
+    colors_when_blank = distinct_colors(blank)
+    colors_with_text = distinct_colors(with_text)
+    with_text.set_photo(solid_photo(RED_BGR))
+    blank.set_photo(solid_photo(RED_BGR))
+
+    assert colors_when_blank == 1
+    assert colors_with_text > 1                                     # o texto foi desenhado
+    assert with_text.grab().toImage() == blank.grab().toImage()     # com foto, o texto some
 
 
 def test_photo_view_can_be_emptied(app):
@@ -812,6 +836,19 @@ def test_worker_reports_the_error_instead_of_dying(app, broken_restore):
 
 
 # ============================================================ main_window.py
+
+def test_new_window_says_how_to_start_in_the_middle_of_the_first_tab(window, photo_file):
+    window.show()
+    QApplication.processEvents()
+    first_tab = window.tabs.currentWidget()
+
+    colors_before_any_photo = distinct_colors(first_tab)
+    window.open_photo(photo_file)
+
+    assert colors_before_any_photo > 1          # há um texto na área que seria da foto
+    shot = first_tab.grab().toImage()
+    assert shot.pixelColor(first_tab.width() // 4, first_tab.height() // 2) == RED      # com a foto, o texto some
+
 
 def test_new_window_shows_a_hint_in_the_status_bar(window):
     assert window.statusBar().currentMessage() != ""

@@ -86,6 +86,7 @@ class MainWindow(QMainWindow):
         self._enable_saving(False)                      # só há o que salvar depois de uma restauração
 
         self.compare_view = CompareView()
+        self.compare_view.placeholder = "Arraste uma foto para cá ou clique em Abrir"
         self.tabs = QTabWidget()
         self.tabs.addTab(self.compare_view, "Antes e depois")
         self.steps_view = StepsView()
