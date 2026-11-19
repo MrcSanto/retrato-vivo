@@ -219,8 +219,9 @@ Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
 
 ### 6.3 Marcos Paulo de Medeiros: interface gráfica (GUI)
 
-**Status: 🔄 itens 1 a 6 e 8 prontos e testados (18/11). Faltam salvar e as abas dos
-extras.** Pasta: `retrato_vivo/gui/`. Vale 1,0 ponto ("qualidade da
+**Status: ✅ itens 1 a 8 prontos e testados (18/11). Falta só o item 9 (abas dos
+extras), que depende dos extras.** Como usar: seção "Interface gráfica" do
+[README](../README.md). Pasta: `retrato_vivo/gui/`. Vale 1,0 ponto ("qualidade da
 interface e desempenho"), e é por ela que o professor vai testar com fotos dele.
 
 **Framework:** **PySide6** (Qt): visual profissional, threads e arrastar-e-soltar prontos.
@@ -248,7 +249,7 @@ rodam sem tela.
    `steps["mapa_de_danos"]` como camada. É essencial: resolve os casos que a detecção
    automática não pega. O que a borracha desmarca continua colorido no mapa de danos,
    porque o mapa pinta as detecções por tipo; o reparo respeita a borracha.
-7. Salvar resultado, mais "exportar comparativo" (`visualize.side_by_side`).
+7. ✅ Salvar resultado, mais "exportar comparativo" (`visualize.side_by_side`).
 8. ✅ Barra de status com `res.damage.stats` e `res.timings_ms`.
 9. Abas dos extras (ver seção 7).
 
@@ -354,7 +355,7 @@ colorização guiada por clique; laudo de restauração em HTML/PDF.
 - [ ] **OpenCV + Deep Learning:** YuNet ✅, colorização, super-resolução (ESPCN/EDSR), bordas HED, profundidade (MiDaS)
 - [ ] **Tudo o que a proposta enviada ao professor prometeu:** correção de perspectiva, Canny vs. HED,
       slider antes/depois (ver seção 6.4)
-- [ ] **GUI** funcional (PySide6)
+- [x] **GUI** funcional (PySide6)
 - [ ] **Aplicabilidade prática:** restaurar fotos de família, de forma acessível para leigos
 - [x] **Técnicas de PI claras:** morfologia, segmentação, histerese, inpainting, NLM, CLAHE
 - [ ] **Vídeo demo de 30 a 60 s**, com link no README

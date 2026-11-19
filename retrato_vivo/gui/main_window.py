@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import cv2
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent, QKeySequence
@@ -11,8 +12,9 @@ from PySide6.QtWidgets import (QDockWidget, QFileDialog, QLabel, QMainWindow, QM
                                QProgressBar, QScrollArea, QTabWidget)
 
 from .. import models
-from ..io_utils import SUPPORTED_EXTENSIONS, load_image
+from ..io_utils import SUPPORTED_EXTENSIONS, load_image, save_image
 from ..pipeline import RestorationResult
+from ..visualize import side_by_side
 from .compare_view import CompareView
 from .controls import ControlsPanel
 from .mask_editor import MaskEditor
@@ -23,6 +25,7 @@ from .worker import RestoreWorker
 # (AVIF, HEIC) e fotos salvas com a extensão errada.
 OPEN_FILTER = ("Imagens (" + " ".join(f"*{ext}" for ext in SUPPORTED_EXTENSIONS)
                + ");;Todos os arquivos (*)")
+SAVE_FILTER = "PNG (*.png);;JPEG (*.jpg);;Todos os arquivos (*)"
 
 
 FACE_MODEL = "yunet"    # o nome que faces.py usa no registro de modelos
@@ -68,6 +71,10 @@ class MainWindow(QMainWindow):
         open_action.setShortcut(QKeySequence.StandardKey.Open)
         self.restore_action = self.toolbar.addAction("Restaurar", self.restore_photo)
         self.restore_action.setEnabled(False)           # só faz sentido com uma foto aberta
+        self.save_action = self.toolbar.addAction("Salvar resultado", self.save_result)
+        self.save_action.setShortcut(QKeySequence.StandardKey.Save)
+        self.export_action = self.toolbar.addAction("Exportar comparativo", self.export_comparison)
+        self._enable_saving(False)                      # só há o que salvar depois de uma restauração
 
         self.compare_view = CompareView()
         self.tabs = QTabWidget()
@@ -123,6 +130,7 @@ class MainWindow(QMainWindow):
         self.compare_view.set_photo(image)
         self.steps_view.clear()
         self.mask_editor.clear()             # a pintura era da foto anterior
+        self._enable_saving(False)           # o resultado antigo era de outra foto
         self.restore_action.setEnabled(True)
         self.restore_photo()
 
@@ -135,6 +143,35 @@ class MainWindow(QMainWindow):
         files = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
         if files:
             self.open_photo(files[0])
+
+    # ------------------------------------------------------------------ salvar
+
+    def save_result(self) -> None:
+        self._save_as("Salvar resultado", "_restaurada.png", self.result.image)
+
+    def export_comparison(self) -> None:
+        comparison = side_by_side(self.result.original, self.result.image)
+        self._save_as("Exportar comparativo", "_antes_depois.jpg", comparison)
+
+    def _save_as(self, title: str, suffix: str, image: np.ndarray) -> None:
+        """Pergunta onde gravar, sugerindo o nome da foto aberta mais ``suffix``, e grava ``image``."""
+        suggestion = self.photo_path.with_name(self.photo_path.stem + suffix)
+        path, _ = QFileDialog.getSaveFileName(self, title, str(suggestion), SAVE_FILTER)
+        if not path:      # o usuário cancelou
+            return
+        try:
+            saved = save_image(path, image)
+        # cv2.error e ValueError: extensão que o OpenCV não grava. OSError: pasta inválida ou sem permissão.
+        except (cv2.error, ValueError, OSError) as error:
+            QMessageBox.warning(self, "Não foi possível salvar",
+                                f"Não foi possível salvar em {path}.\n\n{error}\n\n"
+                                "Confira a pasta e a extensão (.png ou .jpg).")
+            return
+        self.statusBar().showMessage(f"Salvo em {saved}")
+
+    def _enable_saving(self, enabled: bool) -> None:
+        self.save_action.setEnabled(enabled)
+        self.export_action.setEnabled(enabled)
 
     # --------------------------------------------------------------- restaurar
 
@@ -156,6 +193,7 @@ class MainWindow(QMainWindow):
         self.compare_view.set_comparison(result.original, result.image)
         self.steps_view.set_result(result)
         self.mask_editor.set_result(result)
+        self._enable_saving(True)
         self._set_busy(False)
         self.statusBar().showMessage(f"{self._photo_label()} · {restoration_summary(result)}")
 

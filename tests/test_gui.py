@@ -5,7 +5,9 @@ Rodam sem tela: a plataforma "offscreen" do Qt desenha as janelas na memória.
 
 import dataclasses
 import os
+import sys
 import time
+import types
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -29,8 +31,9 @@ from retrato_vivo.gui.mask_editor import MaskCanvas, MaskEditor, overlay_image
 from retrato_vivo.gui.photo_view import PhotoView
 from retrato_vivo.gui.steps_view import StepsView
 from retrato_vivo.gui.worker import RestoreWorker
-from retrato_vivo.io_utils import save_image
+from retrato_vivo.io_utils import load_image, save_image
 from retrato_vivo.pipeline import STEP_INFO, RestorationConfig, restore
+from retrato_vivo.visualize import side_by_side
 
 RED_BGR, GREEN_BGR, BLUE_BGR = (0, 0, 255), (0, 255, 0), (255, 0, 0)     # o OpenCV guarda os canais como azul, verde, vermelho
 RED, GREEN, BLUE = QColor(255, 0, 0), QColor(0, 255, 0), QColor(0, 0, 255)
@@ -104,6 +107,18 @@ def broken_restore(monkeypatch):
         raise RuntimeError("modelo ausente")
 
     monkeypatch.setattr(worker_module, "restore", failing_restore)
+
+
+@pytest.fixture(autouse=True)
+def errors_inside_qt_calls(monkeypatch):
+    """Faz o teste falhar quando um método chamado pelo Qt (botão, sinal, evento) levanta exceção.
+
+    O Qt só imprime o erro e segue em frente; sem isto o teste passaria por engano.
+    """
+    raised = []
+    monkeypatch.setattr(sys, "excepthook", lambda kind, error, traceback: raised.append(error))
+    yield
+    assert not raised, f"exceção dentro de um método chamado pelo Qt: {raised!r}"
 
 
 @pytest.fixture(autouse=True)
@@ -961,6 +976,84 @@ def test_mask_tab_shows_the_restored_photo_ready_to_paint(window, photo_file):
     assert "Máscara" in tab_titles
     assert canvas.mask_add.shape == window.result.original.shape[:2]
     assert canvas.mask_add[50, 100] == 255          # o centro da foto de 200x100
+
+
+@pytest.fixture
+def save_dialog(monkeypatch):
+    """Troca o diálogo de salvar por uma resposta pronta. Anota o nome que a janela sugeriu a cada chamada."""
+    dialog = types.SimpleNamespace(answer="", suggestions=[])
+
+    def fake_dialog(parent, title, suggestion, filters):
+        dialog.suggestions.append(suggestion)
+        return str(dialog.answer), ""
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", fake_dialog)
+    return dialog
+
+
+@pytest.fixture
+def restored_window(window, photo_file) -> MainWindow:
+    window.open_photo(photo_file)
+    wait_until(lambda: window.result is not None)
+    return window
+
+
+def test_save_actions_need_a_restored_photo(window, photo_file, tmp_path):
+    green_file = save_image(tmp_path / "verde.png", solid_photo(GREEN_BGR))
+    before_any_photo = (window.save_action.isEnabled(), window.export_action.isEnabled())
+    window.open_photo(photo_file)
+    wait_until(lambda: window.result is not None)
+    after_restoring = (window.save_action.isEnabled(), window.export_action.isEnabled())
+    window.open_photo(green_file)
+    with_a_new_photo_not_restored_yet = (window.save_action.isEnabled(), window.export_action.isEnabled())
+
+    assert before_any_photo == (False, False)
+    assert after_restoring == (True, True)
+    assert with_a_new_photo_not_restored_yet == (False, False)
+
+
+def test_saving_the_result_writes_the_restored_photo(restored_window, save_dialog, tmp_path):
+    save_dialog.answer = tmp_path / "saída" / "restaurada.png"
+
+    restored_window.save_action.trigger()
+
+    assert np.array_equal(load_image(save_dialog.answer), restored_window.result.image)
+    assert save_dialog.suggestions[0].endswith("vovó_restaurada.png")
+    assert "restaurada.png" in restored_window.statusBar().currentMessage()
+
+
+def test_exporting_the_comparison_writes_before_and_after_side_by_side(restored_window, save_dialog, tmp_path):
+    save_dialog.answer = tmp_path / "comparativo.png"
+    result = restored_window.result
+
+    restored_window.export_action.trigger()
+
+    assert np.array_equal(load_image(save_dialog.answer), side_by_side(result.original, result.image))
+    assert save_dialog.suggestions[0].endswith("vovó_antes_depois.jpg")
+
+
+def test_cancelling_the_save_dialog_writes_nothing(restored_window, save_dialog, tmp_path, warnings):
+    files_before = sorted(tmp_path.iterdir())
+    message_before = restored_window.statusBar().currentMessage()
+
+    restored_window.save_action.trigger()       # o diálogo de mentira devolve "", como no botão Cancelar
+
+    assert sorted(tmp_path.iterdir()) == files_before
+    assert restored_window.statusBar().currentMessage() == message_before
+    assert warnings == []                       # cancelar não é erro
+
+
+@pytest.mark.parametrize("bad_name", [
+    "foto.formato_que_nao_existe",      # o OpenCV não sabe gravar esta extensão
+    "vovó.png/dentro_de_um_arquivo.png",    # a "pasta" é a própria foto de teste
+])
+def test_failed_save_warns_and_does_not_claim_success(restored_window, save_dialog, tmp_path, warnings, bad_name):
+    save_dialog.answer = tmp_path / bad_name
+
+    restored_window.save_action.trigger()
+
+    assert len(warnings) == 1 and bad_name.split("/")[-1] in warnings[0]
+    assert "Salvo" not in restored_window.statusBar().currentMessage()
 
 
 def test_steps_tab_follows_the_open_photo(window, photo_file, tmp_path):
