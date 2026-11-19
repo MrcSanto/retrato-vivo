@@ -5,14 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent, QKeySequence
-from PySide6.QtWidgets import (QFileDialog, QLabel, QMainWindow, QMessageBox, QProgressBar,
-                               QTabWidget)
+from PySide6.QtWidgets import (QDockWidget, QFileDialog, QLabel, QMainWindow, QMessageBox,
+                               QProgressBar, QScrollArea, QTabWidget)
 
 from .. import models
 from ..io_utils import SUPPORTED_EXTENSIONS, load_image
 from ..pipeline import RestorationResult
 from .compare_view import CompareView
+from .controls import ControlsPanel
+from .steps_view import StepsView
 from .worker import RestoreWorker
 
 # "Todos os arquivos" existe porque load_image também abre formatos fora da lista
@@ -68,7 +71,18 @@ class MainWindow(QMainWindow):
         self.compare_view = CompareView()
         self.tabs = QTabWidget()
         self.tabs.addTab(self.compare_view, "Antes e depois")
+        self.steps_view = StepsView()
+        self.tabs.addTab(self.steps_view, "Etapas")
         self.setCentralWidget(self.tabs)
+
+        self.controls = ControlsPanel()
+        scroll = QScrollArea()                          # em tela baixa o painel rola em vez de ser cortado
+        scroll.setWidget(self.controls)
+        scroll.setWidgetResizable(True)
+        dock = QDockWidget("Controles")
+        dock.setWidget(scroll)
+        dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)    # fixo: não fecha nem destaca
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)                    # sem faixa, a barra só anima: "ocupado"
@@ -99,6 +113,7 @@ class MainWindow(QMainWindow):
             return
         self.image, self.photo_path, self.result = image, path, None
         self.compare_view.set_photo(image)
+        self.steps_view.clear()
         self.restore_action.setEnabled(True)
         self.restore_photo()
 
@@ -117,7 +132,8 @@ class MainWindow(QMainWindow):
     def restore_photo(self) -> None:
         """Restaura a foto aberta em segundo plano. O resultado chega em ``_show_result``."""
         self._wait_for_worker()
-        self.worker = RestoreWorker(self.image)
+        self.worker = RestoreWorker(self.image, self.controls.config(),
+                                    post_stages=self.controls.post_stages())
         self.worker.done.connect(self._show_result)
         self.worker.failed.connect(self._show_failure)
         self._set_busy(True)
@@ -127,6 +143,7 @@ class MainWindow(QMainWindow):
     def _show_result(self, result: RestorationResult) -> None:
         self.result = result
         self.compare_view.set_comparison(result.original, result.image)
+        self.steps_view.set_result(result)
         self._set_busy(False)
         self.statusBar().showMessage(f"{self._photo_label()} · {restoration_summary(result)}")
 

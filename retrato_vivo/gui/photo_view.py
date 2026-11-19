@@ -21,6 +21,10 @@ class PhotoView(QWidget):
         self._photo = to_qimage(img)
         self.update()     # pede ao Qt para chamar paintEvent de novo
 
+    def clear(self) -> None:
+        self._photo = None
+        self.update()
+
     def photo_rect(self) -> QRect:
         """Onde a foto fica dentro do widget. Vazio enquanto não há foto."""
         if self._photo is None:

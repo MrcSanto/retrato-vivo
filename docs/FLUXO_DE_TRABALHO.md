@@ -219,8 +219,8 @@ Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
 
 ### 6.3 Marcos Paulo de Medeiros: interface gráfica (GUI)
 
-**Status: 🔄 base pronta e testada (18/11): itens 1, 2, 3 e 8. Faltam etapas, controles,
-editor de máscara e salvar.** Pasta: `retrato_vivo/gui/`. Vale 1,0 ponto ("qualidade da
+**Status: 🔄 itens 1 a 5 e 8 prontos e testados (18/11). Faltam o editor de máscara,
+salvar e as abas dos extras.** Pasta: `retrato_vivo/gui/`. Vale 1,0 ponto ("qualidade da
 interface e desempenho"), e é por ela que o professor vai testar com fotos dele.
 
 **Framework:** **PySide6** (Qt): visual profissional, threads e arrastar-e-soltar prontos.
@@ -235,11 +235,13 @@ rodam sem tela.
 2. ✅ Botão "Restaurar", chamando `restore()` numa **`QThread`** (a interface não pode travar) e
    mostrando uma barra de progresso.
 3. ✅ **Comparação antes/depois com slider** arrastável sobre a imagem.
-4. Lista ou abas com **cada etapa** (`res.steps`), com o título e a descrição de
+4. ✅ Lista ou abas com **cada etapa** (`res.steps`), com o título e a descrição de
    `STEP_INFO` e a frase de `res.notes` ("ruído medido 0,7: foto limpa, etapa pulada").
    É isso que mostra o "processamento de imagens claro" que o enunciado pede.
-5. Painel de controles: ver a
+5. ✅ Painel de controles: ver a
    [tabela de controles](COMO_FUNCIONA.md#5-controles-que-a-interface-pode-oferecer).
+   Inclui a colorização (caixa "Colorir foto P&B" e intensidade). Etapa de IA nova entra em
+   `ControlsPanel.post_stages()`, em `gui/controls.py`.
 6. **Editor de máscara:** sobre `res.original`, pincel (adicionar dano) e borracha (remover
    falso positivo), com tamanho de pincel ajustável. Gera `mask_add` e `mask_remove`
    (uint8, mesmo tamanho de `res.original`) e chama `restore()` de novo. Mostrar
