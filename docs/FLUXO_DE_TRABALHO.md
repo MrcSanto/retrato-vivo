@@ -219,8 +219,8 @@ Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
 
 ### 6.3 Marcos Paulo de Medeiros: interface gráfica (GUI)
 
-**Status: 🔄 itens 1 a 5 e 8 prontos e testados (18/11). Faltam o editor de máscara,
-salvar e as abas dos extras.** Pasta: `retrato_vivo/gui/`. Vale 1,0 ponto ("qualidade da
+**Status: 🔄 itens 1 a 6 e 8 prontos e testados (18/11). Faltam salvar e as abas dos
+extras.** Pasta: `retrato_vivo/gui/`. Vale 1,0 ponto ("qualidade da
 interface e desempenho"), e é por ela que o professor vai testar com fotos dele.
 
 **Framework:** **PySide6** (Qt): visual profissional, threads e arrastar-e-soltar prontos.
@@ -242,11 +242,12 @@ rodam sem tela.
    [tabela de controles](COMO_FUNCIONA.md#5-controles-que-a-interface-pode-oferecer).
    Inclui a colorização (caixa "Colorir foto P&B" e intensidade). Etapa de IA nova entra em
    `ControlsPanel.post_stages()`, em `gui/controls.py`.
-6. **Editor de máscara:** sobre `res.original`, pincel (adicionar dano) e borracha (remover
+6. ✅ **Editor de máscara:** sobre `res.original`, pincel (adicionar dano) e borracha (remover
    falso positivo), com tamanho de pincel ajustável. Gera `mask_add` e `mask_remove`
    (uint8, mesmo tamanho de `res.original`) e chama `restore()` de novo. Mostrar
    `steps["mapa_de_danos"]` como camada. É essencial: resolve os casos que a detecção
-   automática não pega.
+   automática não pega. O que a borracha desmarca continua colorido no mapa de danos,
+   porque o mapa pinta as detecções por tipo; o reparo respeita a borracha.
 7. Salvar resultado, mais "exportar comparativo" (`visualize.side_by_side`).
 8. ✅ Barra de status com `res.damage.stats` e `res.timings_ms`.
 9. Abas dos extras (ver seção 7).

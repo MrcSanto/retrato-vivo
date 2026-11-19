@@ -15,6 +15,7 @@ from ..io_utils import SUPPORTED_EXTENSIONS, load_image
 from ..pipeline import RestorationResult
 from .compare_view import CompareView
 from .controls import ControlsPanel
+from .mask_editor import MaskEditor
 from .steps_view import StepsView
 from .worker import RestoreWorker
 
@@ -73,12 +74,19 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.compare_view, "Antes e depois")
         self.steps_view = StepsView()
         self.tabs.addTab(self.steps_view, "Etapas")
+        self.mask_editor = MaskEditor()
+        self.tabs.addTab(self.mask_editor, "Máscara")
+        self.mask_editor.apply_button.clicked.connect(self.restore_photo)
         self.setCentralWidget(self.tabs)
 
         self.controls = ControlsPanel()
         scroll = QScrollArea()                          # em tela baixa o painel rola em vez de ser cortado
         scroll.setWidget(self.controls)
         scroll.setWidgetResizable(True)
+        # Largura mínima: a do painel, mais a barra de rolagem vertical e a moldura. Sem isto,
+        # uma aba larga espreme o painel e ele passa a rolar para o lado.
+        scroll.setMinimumWidth(self.controls.sizeHint().width() + scroll.verticalScrollBar().sizeHint().width()
+                               + 2 * scroll.frameWidth())
         dock = QDockWidget("Controles")
         dock.setWidget(scroll)
         dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)    # fixo: não fecha nem destaca
@@ -114,6 +122,7 @@ class MainWindow(QMainWindow):
         self.image, self.photo_path, self.result = image, path, None
         self.compare_view.set_photo(image)
         self.steps_view.clear()
+        self.mask_editor.clear()             # a pintura era da foto anterior
         self.restore_action.setEnabled(True)
         self.restore_photo()
 
@@ -132,8 +141,10 @@ class MainWindow(QMainWindow):
     def restore_photo(self) -> None:
         """Restaura a foto aberta em segundo plano. O resultado chega em ``_show_result``."""
         self._wait_for_worker()
+        mask_add, mask_remove = self.mask_editor.canvas.masks()
         self.worker = RestoreWorker(self.image, self.controls.config(),
-                                    post_stages=self.controls.post_stages())
+                                    post_stages=self.controls.post_stages(),
+                                    mask_add=mask_add, mask_remove=mask_remove)
         self.worker.done.connect(self._show_result)
         self.worker.failed.connect(self._show_failure)
         self._set_busy(True)
@@ -144,6 +155,7 @@ class MainWindow(QMainWindow):
         self.result = result
         self.compare_view.set_comparison(result.original, result.image)
         self.steps_view.set_result(result)
+        self.mask_editor.set_result(result)
         self._set_busy(False)
         self.statusBar().showMessage(f"{self._photo_label()} · {restoration_summary(result)}")
 
@@ -159,6 +171,7 @@ class MainWindow(QMainWindow):
         restaurações ao mesmo tempo poderiam se atrapalhar.
         """
         self.toolbar.setEnabled(not busy)
+        self.mask_editor.apply_button.setEnabled(not busy)
         self.setAcceptDrops(not busy)
         self.progress.setVisible(busy)
 
