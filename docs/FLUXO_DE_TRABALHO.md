@@ -219,8 +219,9 @@ Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
 
 ### 6.3 Marcos Paulo de Medeiros: interface gráfica (GUI)
 
-**Status: ✅ itens 1 a 8 prontos e testados (18/11). Falta só o item 9 (abas dos
-extras), que depende dos extras.** Como usar: seção "Interface gráfica" do
+**Status: ✅ itens 1 a 8 prontos e testados (18/11), já com o polimento: restauração
+refeita ao mexer nos controles, e desfazer e zoom no editor de máscara. Falta só o item 9
+(abas dos extras), que depende dos extras.** Como usar: seção "Interface gráfica" do
 [README](../README.md). Pasta: `retrato_vivo/gui/`. Vale 1,0 ponto ("qualidade da
 interface e desempenho"), e é por ela que o professor vai testar com fotos dele.
 
@@ -234,8 +235,10 @@ rodam sem tela.
 1. ✅ Abrir imagem (botão + **arrastar e soltar**), com todos os formatos de
    `io_utils.SUPPORTED_EXTENSIONS`. Carregar **sempre** via `load_image`.
 2. ✅ Botão "Restaurar", chamando `restore()` numa **`QThread`** (a interface não pode travar) e
-   mostrando uma barra de progresso.
-3. ✅ **Comparação antes/depois com slider** arrastável sobre a imagem.
+   mostrando uma barra de progresso. Mexer nos controles também refaz a restauração, 0,4 s
+   depois da última mexida, sempre uma de cada vez.
+3. ✅ **Comparação antes/depois com slider** arrastável sobre a imagem, com os rótulos
+   "Antes" e "Depois".
 4. ✅ Lista ou abas com **cada etapa** (`res.steps`), com o título e a descrição de
    `STEP_INFO` e a frase de `res.notes` ("ruído medido 0,7: foto limpa, etapa pulada").
    É isso que mostra o "processamento de imagens claro" que o enunciado pede.
@@ -248,7 +251,9 @@ rodam sem tela.
    (uint8, mesmo tamanho de `res.original`) e chama `restore()` de novo. Mostrar
    `steps["mapa_de_danos"]` como camada. É essencial: resolve os casos que a detecção
    automática não pega. O que a borracha desmarca continua colorido no mapa de danos,
-   porque o mapa pinta as detecções por tipo; o reparo respeita a borracha.
+   porque o mapa pinta as detecções por tipo; o reparo respeita a borracha. Tem desfazer
+   (Ctrl+Z, os 10 últimos traços) e zoom de até 8 vezes (roda do mouse; o botão direito
+   arrasta a foto ampliada).
 7. ✅ Salvar resultado, mais "exportar comparativo" (`visualize.side_by_side`).
 8. ✅ Barra de status com `res.damage.stats` e `res.timings_ms`.
 9. Abas dos extras (ver seção 7).

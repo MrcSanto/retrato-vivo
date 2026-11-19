@@ -13,8 +13,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QEvent, QMimeData, QPointF, QRect, QSize, Qt, QUrl
-from PySide6.QtGui import QColor, QDropEvent, QKeySequence, QMouseEvent
+from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, QRect, QSize, Qt, QUrl
+from PySide6.QtGui import QColor, QDropEvent, QImage, QKeySequence, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication, QCheckBox, QFileDialog, QLabel, QMessageBox
 
 from retrato_vivo import models
@@ -27,7 +27,7 @@ from retrato_vivo.gui.compare_view import CompareView
 from retrato_vivo.gui.controls import ControlsPanel
 from retrato_vivo.gui.convert import fit_rect, to_qimage
 from retrato_vivo.gui.main_window import MainWindow, restoration_summary
-from retrato_vivo.gui.mask_editor import MaskCanvas, MaskEditor, overlay_image
+from retrato_vivo.gui.mask_editor import MAX_UNDO_STEPS, MAX_ZOOM, MaskCanvas, MaskEditor, overlay_image
 from retrato_vivo.gui.photo_view import PhotoView
 from retrato_vivo.gui.steps_view import StepsView
 from retrato_vivo.gui.worker import RestoreWorker
@@ -36,7 +36,9 @@ from retrato_vivo.pipeline import STEP_INFO, RestorationConfig, restore
 from retrato_vivo.visualize import side_by_side
 
 RED_BGR, GREEN_BGR, BLUE_BGR = (0, 0, 255), (0, 255, 0), (255, 0, 0)     # o OpenCV guarda os canais como azul, verde, vermelho
+WHITE_BGR = (255, 255, 255)
 RED, GREEN, BLUE = QColor(255, 0, 0), QColor(0, 255, 0), QColor(0, 0, 255)
+RED_RGB, GREEN_RGB, BLUE_RGB = (255, 0, 0), (0, 255, 0), (0, 0, 255)     # para comparar com capturas de tela
 
 
 @pytest.fixture(scope="module")
@@ -66,10 +68,17 @@ def solid_photo(bgr: tuple[int, int, int]) -> np.ndarray:
     return np.full((100, 200, 3), bgr, np.uint8)
 
 
-def mouse(kind: QEvent.Type, x: float, y: float) -> QMouseEvent:
-    """Um clique ou arrasto com o botão esquerdo na posição (x, y) do widget."""
-    return QMouseEvent(kind, QPointF(x, y), QPointF(x, y), Qt.MouseButton.LeftButton,
-                       Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+def mouse(kind: QEvent.Type, x: float, y: float,
+          button: Qt.MouseButton = Qt.MouseButton.LeftButton) -> QMouseEvent:
+    """Um clique ou arrasto na posição (x, y) do widget. Sem dizer o botão, é o esquerdo."""
+    return QMouseEvent(kind, QPointF(x, y), QPointF(x, y), button, button, Qt.KeyboardModifier.NoModifier)
+
+
+def wheel(x: float, y: float, notches: float) -> QWheelEvent:
+    """A roda do mouse girada ``notches`` cliques com o cursor em (x, y). Positivo: para a frente."""
+    angle = QPoint(0, round(notches * 120))     # o Qt mede o giro em oitavos de grau: 120 por clique
+    return QWheelEvent(QPointF(x, y), QPointF(x, y), QPoint(), angle, Qt.MouseButton.NoButton,
+                       Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
 
 
 def file_mime(path) -> QMimeData:
@@ -84,6 +93,29 @@ def wait_until(condition, timeout_s: float = 5.0) -> None:
     deadline = time.monotonic() + timeout_s
     while not condition():
         assert time.monotonic() < deadline, "a condição não se cumpriu a tempo"
+        QApplication.processEvents()
+        time.sleep(0.005)
+
+
+def longest_freeze_until(condition, timeout_s: float = 5.0) -> float:
+    """Espera como ``wait_until`` e devolve, em segundos, o maior tempo que o Qt ficou sem devolver o controle.
+
+    Se algum método da janela ficar parado esperando a restauração terminar, esse tempo aparece aqui.
+    """
+    deadline, longest = time.monotonic() + timeout_s, 0.0
+    while not condition():
+        assert time.monotonic() < deadline, "a condição não se cumpriu a tempo"
+        started = time.monotonic()
+        QApplication.processEvents()
+        longest = max(longest, time.monotonic() - started)
+        time.sleep(0.005)
+    return longest
+
+
+def let_qt_run(seconds: float) -> None:
+    """Deixa o Qt trabalhar por um tempo, para o que estiver agendado (timers, sinais) acontecer."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
         QApplication.processEvents()
         time.sleep(0.005)
 
@@ -189,6 +221,39 @@ def test_photo_view_draws_the_photo_centered_keeping_proportion(app):
     assert shot.pixelColor(50, 10) not in (RED, BLUE)      # acima da foto: só o fundo
 
 
+def screenshot(widget) -> np.ndarray:
+    """O que o widget mostra, como array (altura, largura, 3) em RGB."""
+    image = widget.grab().toImage().convertToFormat(QImage.Format.Format_RGB888)
+    rows = np.frombuffer(image.constBits(), np.uint8).reshape(image.height(), image.bytesPerLine())
+    return rows[:, :image.width() * 3].reshape(image.height(), image.width(), 3).copy()
+
+
+def distinct_colors(widget) -> int:
+    """Quantas cores diferentes aparecem no widget. Uma só quer dizer que ele está em branco."""
+    return len(np.unique(screenshot(widget).reshape(-1, 3), axis=0))
+
+
+def pixels_of_another_color(region: np.ndarray, expected_rgb: tuple[int, int, int]) -> int:
+    """Quantos pixels da região não têm a cor esperada."""
+    return int((region != expected_rgb).any(axis=-1).sum())
+
+
+def test_empty_photo_view_shows_its_placeholder_text_until_a_photo_arrives(app):
+    blank, with_text = PhotoView(), PhotoView()
+    for view in (blank, with_text):
+        view.resize(300, 100)
+    with_text.placeholder = "Arraste uma foto para cá"
+
+    colors_when_blank = distinct_colors(blank)
+    colors_with_text = distinct_colors(with_text)
+    with_text.set_photo(solid_photo(RED_BGR))
+    blank.set_photo(solid_photo(RED_BGR))
+
+    assert colors_when_blank == 1
+    assert colors_with_text > 1                                     # o texto foi desenhado
+    assert with_text.grab().toImage() == blank.grab().toImage()     # com foto, o texto some
+
+
 def test_photo_view_can_be_emptied(app):
     view = PhotoView()
     view.resize(200, 100)
@@ -252,6 +317,54 @@ def test_divider_follows_the_mouse_when_the_photo_has_side_margins(red_before_bl
     assert shot.pixelColor(120, 50) == RED
     assert shot.pixelColor(200, 50) == BLUE
     assert shot.pixelColor(50, 50) not in (RED, BLUE)       # margem: só o fundo
+
+
+def test_compare_view_labels_each_side_at_the_top(red_before_blue_after):
+    shot = screenshot(red_before_blue_after)        # 200x100: "antes" vermelho à esquerda, "depois" azul à direita
+
+    assert pixels_of_another_color(shot[:45, :95], RED_RGB) > 0         # rótulo "Antes"
+    assert pixels_of_another_color(shot[:45, 105:], BLUE_RGB) > 0       # rótulo "Depois"
+    assert pixels_of_another_color(shot[55:, :95], RED_RGB) == 0        # o resto da foto fica livre
+    assert pixels_of_another_color(shot[55:, 105:], BLUE_RGB) == 0
+
+
+def test_label_disappears_when_its_side_gets_too_narrow(red_before_blue_after):
+    view = red_before_blue_after
+
+    view.mousePressEvent(mouse(QEvent.Type.MouseButtonPress, 20, 50))      # sobra uma faixa de 20 pixels de "antes"
+
+    shot = screenshot(view)
+    assert pixels_of_another_color(shot[:45, :17], RED_RGB) == 0        # sem rótulo "Antes" na faixa estreita
+    assert pixels_of_another_color(shot[:45, 24:110], BLUE_RGB) == 0    # e ele não invade o lado do "depois"
+    assert pixels_of_another_color(shot[:45, 110:], BLUE_RGB) > 0       # "Depois" continua lá
+
+
+def test_after_label_also_disappears_when_its_side_gets_too_narrow(red_before_blue_after):
+    view = red_before_blue_after
+
+    view.mousePressEvent(mouse(QEvent.Type.MouseButtonPress, 180, 50))     # sobra uma faixa de 20 pixels de "depois"
+
+    shot = screenshot(view)
+    assert pixels_of_another_color(shot[:45, 184:], BLUE_RGB) == 0      # sem rótulo "Depois" na faixa estreita
+    assert pixels_of_another_color(shot[:45, 90:176], RED_RGB) == 0     # e ele não invade o lado do "antes"
+    assert pixels_of_another_color(shot[:45, :90], RED_RGB) > 0         # "Antes" continua lá
+
+
+def test_divider_shows_even_over_a_white_photo(app):
+    view = CompareView()
+    view.resize(200, 100)
+    view.set_comparison(solid_photo(WHITE_BGR), solid_photo(WHITE_BGR))
+
+    row = screenshot(view)[70]          # uma linha da foto abaixo dos rótulos
+
+    assert row[95:105].min() < 100                                      # há um traço escuro junto ao divisor
+    assert (row[:95] == 255).all() and (row[105:] == 255).all()         # e só ali
+
+
+def test_single_photo_has_no_labels_and_no_divider(red_before_blue_after):
+    red_before_blue_after.set_photo(solid_photo(GREEN_BGR))
+
+    assert pixels_of_another_color(screenshot(red_before_blue_after), GREEN_RGB) == 0
 
 
 def test_showing_a_single_photo_ends_the_comparison(red_before_blue_after):
@@ -368,11 +481,12 @@ def canvas(app) -> MaskCanvas:
     return canvas
 
 
-def drag(canvas: MaskCanvas, start: tuple[int, int], end: tuple[int, int]) -> None:
+def drag(canvas: MaskCanvas, start: tuple[int, int], end: tuple[int, int],
+         button: Qt.MouseButton = Qt.MouseButton.LeftButton) -> None:
     """Aperta o botão em ``start``, arrasta até ``end`` e solta (posições na tela)."""
-    canvas.mousePressEvent(mouse(PRESS, *start))
-    canvas.mouseMoveEvent(mouse(MOVE, *end))
-    canvas.mouseReleaseEvent(mouse(RELEASE, *end))
+    canvas.mousePressEvent(mouse(PRESS, *start, button))
+    canvas.mouseMoveEvent(mouse(MOVE, *end, button))
+    canvas.mouseReleaseEvent(mouse(RELEASE, *end, button))
 
 
 def test_new_photo_gets_empty_masks_of_its_size(canvas):
@@ -494,6 +608,71 @@ def test_overlay_is_transparent_except_where_the_masks_are_painted(app):
     assert added.rgb() != removed.rgb()             # dá para distinguir o pincel da borracha
 
 
+def test_undo_removes_one_stroke_at_a_time(canvas):
+    drag(canvas, (50, 30), (150, 30))       # primeiro traço: linha 60 da foto
+    drag(canvas, (50, 80), (150, 80))       # segundo traço: linha 160 da foto
+
+    canvas.undo()
+    after_one_undo = (canvas.mask_add[60, 200], canvas.mask_add[160, 200])
+    canvas.undo()
+    after_two_undos = bool(canvas.mask_add.any())
+    canvas.undo()                           # não há mais o que desfazer: não faz nada e não dá erro
+
+    assert after_one_undo == (255, 0)
+    assert not after_two_undos
+    assert not canvas.mask_add.any()
+
+
+def test_undo_restores_what_the_eraser_took_from_the_brush(canvas):
+    drag(canvas, (50, 50), (150, 50))                   # pincel
+    canvas.set_erasing(True)
+    drag(canvas, (100, 20), (100, 80))                  # borracha, cruzando o traço na coluna 200
+
+    canvas.undo()
+
+    assert (canvas.mask_add[100, 200], canvas.mask_remove[100, 200]) == (255, 0)
+    assert not canvas.mask_remove.any()
+
+
+def test_undo_brings_back_what_the_clear_button_erased(canvas):
+    drag(canvas, (50, 50), (150, 50))
+    canvas.clear_masks()
+
+    canvas.undo()
+
+    assert canvas.mask_add[100, 200] == 255
+
+
+def test_undo_never_brings_back_strokes_from_another_photo(canvas):
+    drag(canvas, (50, 50), (150, 50))
+    canvas.clear()                                                      # outra foto foi aberta
+    canvas.set_photo(np.full((200, 400, 3), BLUE_BGR, np.uint8))        # por acaso, do mesmo tamanho
+    canvas.undo()
+    same_size_is_clean = not canvas.mask_add.any()
+
+    drag(canvas, (50, 50), (150, 50))
+    canvas.set_photo(np.full((100, 300, 3), BLUE_BGR, np.uint8))        # agora uma de outro tamanho
+    canvas.undo()
+
+    assert same_size_is_clean
+    assert canvas.mask_add.shape == (100, 300) and not canvas.mask_add.any()
+
+
+def test_undo_goes_back_a_limited_number_of_strokes(canvas):
+    drag(canvas, (10, 20), (10, 80))
+    drag(canvas, (20, 20), (20, 80))
+    after_the_two_oldest_strokes = canvas.mask_add.copy()
+    for stroke in range(MAX_UNDO_STEPS):                # mais traços, até encher o histórico
+        x = 40 + 10 * stroke
+        drag(canvas, (x, 20), (x, 80))
+
+    for _ in range(MAX_UNDO_STEPS + 2):                 # tenta desfazer todos, inclusive os dois mais antigos
+        canvas.undo()
+
+    assert after_the_two_oldest_strokes.any()
+    assert np.array_equal(canvas.mask_add, after_the_two_oldest_strokes)
+
+
 def test_masks_are_handed_out_as_copies(canvas):
     drag(canvas, (50, 50), (150, 50))
 
@@ -518,6 +697,191 @@ def test_clearing_the_canvas_removes_the_photo_and_the_strokes(canvas):
 
     assert masks_without_photo == (None, None)
     assert not canvas.mask_add.any()            # nada da foto anterior
+
+
+WHOLE_PHOTO = QRect(0, 0, 200, 100)     # onde a foto do fixture ``canvas`` fica na tela sem zoom
+RIGHT_BUTTON = Qt.MouseButton.RightButton
+
+
+def test_zoom_enlarges_the_photo_around_the_cursor(canvas):
+    canvas.brush_size = 2
+    canvas.zoom_at(QPointF(50, 25), 2)      # o cursor está sobre o ponto (100, 50) da foto
+
+    drag(canvas, (50, 25), (50, 25))        # o mesmo ponto continua embaixo do cursor
+    drag(canvas, (90, 25), (90, 25))        # agora 1 pixel da tela vale 1 da foto: 40 para a direita
+
+    assert canvas.photo_rect().size() == QSize(400, 200)
+    assert canvas.mask_add[50, 100] == 255
+    assert canvas.mask_add[50, 140] == 255
+    assert canvas.mask_add[50, 180] == 0    # onde o segundo clique cairia sem o zoom
+
+
+def test_wheel_zooms_in_and_out_around_the_cursor(canvas):
+    canvas.wheelEvent(wheel(150, 75, 1))        # um clique da roda para a frente, com o cursor no ponto (300, 150) da foto
+    after_one_notch = canvas.zoom
+    canvas.wheelEvent(wheel(150, 75, 3))
+    drag(canvas, (150, 75), (150, 75))          # pinta onde o cursor está
+    canvas.wheelEvent(wheel(150, 75, -4))       # os quatro cliques de volta
+
+    assert after_one_notch > 1
+    assert canvas.mask_add[150, 300] == 255     # o mesmo ponto da foto continuou embaixo do cursor
+    assert canvas.zoom == pytest.approx(1)
+    assert canvas.photo_rect() == WHOLE_PHOTO
+
+
+@pytest.mark.parametrize("area", [QSize(203, 100), QSize(200, 103)])
+def test_without_zoom_the_photo_sits_exactly_where_the_photo_view_fits_it(canvas, area):
+    canvas.resize(area)         # sobram 3 pixels de margem: o arredondamento tem de ser o mesmo do encaixe
+
+    assert canvas.photo_rect() == PhotoView.photo_rect(canvas)
+
+
+def test_small_wheel_movements_zoom_less_than_a_whole_notch(canvas):
+    canvas.wheelEvent(wheel(100, 50, 0.25))     # o touchpad manda o giro em frações de clique
+    after_a_quarter_notch = canvas.zoom
+    canvas.reset_zoom()
+    canvas.wheelEvent(wheel(100, 50, 1))
+
+    assert 1 < after_a_quarter_notch < canvas.zoom
+
+
+def test_zoom_stops_at_the_whole_photo_and_at_the_maximum(canvas):
+    canvas.wheelEvent(wheel(30, 30, -3))        # já mostra a foto inteira: não reduz mais
+    at_the_minimum = (canvas.zoom, canvas.photo_rect())
+    for _ in range(50):
+        canvas.wheelEvent(wheel(30, 30, 1))
+
+    assert at_the_minimum == (1, WHOLE_PHOTO)
+    assert canvas.zoom == MAX_ZOOM
+    assert canvas.photo_rect().width() == 200 * MAX_ZOOM
+
+
+def test_zooming_all_the_way_out_shows_the_whole_photo_again(canvas):
+    canvas.zoom_at(QPointF(0, 0), 4)            # amplia num canto...
+    canvas.zoom_at(QPointF(200, 100), 1 / 4)    # ...e reduz com o cursor no canto oposto
+
+    assert canvas.photo_rect() == WHOLE_PHOTO
+
+
+def test_wheel_over_an_empty_canvas_does_nothing(app):
+    canvas = MaskCanvas()
+    canvas.resize(200, 100)
+
+    canvas.wheelEvent(wheel(100, 50, 2))
+
+    assert canvas.zoom == 1
+
+
+def test_zoomed_canvas_draws_only_the_enlarged_part(canvas):
+    canvas.set_photo(red_and_blue_photo())      # 200x100: metade vermelha, metade azul
+    blue_before = pixels_of_another_color(screenshot(canvas), RED_RGB)
+
+    canvas.zoom_at(QPointF(0, 50), 4)           # amplia na borda esquerda: só cabe na tela um pedaço da metade vermelha
+
+    assert blue_before > 0
+    assert pixels_of_another_color(screenshot(canvas), RED_RGB) == 0
+
+
+def test_strokes_stay_over_the_photo_when_it_is_zoomed(canvas):
+    drag(canvas, (100, 50), (100, 50))          # um ponto no centro da foto
+    canvas.zoom_at(QPointF(0, 0), 2)            # o centro da foto vai para o canto de baixo da tela
+
+    shot = canvas.grab().toImage()
+    assert shot.pixelColor(195, 95) != RED      # o ponto pintado acompanhou a foto
+    assert shot.pixelColor(100, 50) == RED      # e saiu de onde estava na tela
+
+
+def test_right_button_drag_moves_the_zoomed_photo_without_painting(canvas):
+    canvas.set_photo(red_and_blue_photo())
+    canvas.zoom_at(QPointF(100, 50), 2)         # em volta do centro: vermelho à esquerda, azul à direita
+    right_side_before = canvas.grab().toImage().pixelColor(150, 50)
+
+    drag(canvas, (50, 50), (150, 50), RIGHT_BUTTON)     # puxa a foto 100 pixels para a direita
+
+    assert right_side_before == BLUE
+    assert canvas.grab().toImage().pixelColor(150, 50) == RED       # a metade vermelha veio junto
+    assert not canvas.mask_add.any() and not canvas.mask_remove.any()
+
+
+def test_dragging_the_zoomed_photo_follows_the_mouse_until_the_button_is_released(canvas):
+    canvas.zoom_at(QPointF(100, 50), 2)         # a foto ampliada começa em x = -100
+    canvas.mousePressEvent(mouse(PRESS, 150, 50, RIGHT_BUTTON))
+    canvas.mouseMoveEvent(mouse(MOVE, 140, 50, RIGHT_BUTTON))
+    canvas.mouseMoveEvent(mouse(MOVE, 130, 50, RIGHT_BUTTON))
+    while_dragging = canvas.photo_rect().left()
+    canvas.mouseReleaseEvent(mouse(RELEASE, 130, 50, RIGHT_BUTTON))
+    canvas.mouseMoveEvent(mouse(MOVE, 60, 50, Qt.MouseButton.NoButton))     # o mouse passeando depois de soltar
+
+    assert while_dragging == -120               # 20 pixels para a esquerda, os mesmos que o mouse andou
+    assert canvas.photo_rect().left() == -120
+
+
+def test_zoomed_photo_cannot_be_dragged_out_of_the_area(canvas):
+    canvas.zoom_at(QPointF(100, 50), 2)
+    drag(canvas, (0, 0), (900, 900), RIGHT_BUTTON)      # muito além do que a foto tem para mostrar
+    dragged_right_and_down = canvas.photo_rect()
+    drag(canvas, (100, 50), (90, 50), RIGHT_BUTTON)     # voltar 10 pixels responde na hora
+    back_ten_pixels = canvas.photo_rect().left()
+    drag(canvas, (0, 0), (-900, -900), RIGHT_BUTTON)
+
+    assert dragged_right_and_down == QRect(0, 0, 400, 200)          # parou com o canto de cima da foto no canto da área
+    assert back_ten_pixels == -10
+    assert canvas.photo_rect() == QRect(-200, -100, 400, 200)       # e com o canto de baixo no canto de baixo
+
+
+def test_zoomed_photo_stays_centered_in_the_direction_it_still_fits(canvas):
+    canvas.resize(400, 100)                     # a foto ocupa de x=100 a x=300: sobra margem dos dois lados
+    canvas.zoom_at(QPointF(200, 50), 1.5)       # 300 pixels de largura: ainda cabe nos 400 da área
+
+    drag(canvas, (200, 50), (350, 80), RIGHT_BUTTON)
+
+    assert canvas.photo_rect() == QRect(50, 0, 300, 150)    # no meio na horizontal; na vertical foi até o limite
+
+
+def test_shrinking_the_area_keeps_the_zoomed_photo_covering_it(canvas):
+    canvas.resize(400, 200)
+    canvas.show()                               # o Qt só avisa da mudança de tamanho a quem está na tela
+    canvas.zoom_at(QPointF(0, 0), 2)            # o canto de cima da foto fica no canto da área
+
+    canvas.resize(200, 100)
+    QApplication.processEvents()
+
+    assert canvas.photo_rect() == QRect(0, 0, 400, 200)     # continua no canto, sem área vazia antes da foto
+
+
+def test_brush_keeps_its_size_on_screen_so_zoom_gives_finer_strokes(canvas):
+    canvas.zoom_at(QPointF(100, 50), 2)         # em volta do centro: o ponto (200, 100) da foto continua lá
+
+    drag(canvas, (100, 50), (100, 50))          # pincel de 10 pixels na tela: agora 10 na foto, em vez de 20
+
+    assert canvas.mask_add[100, 200] == 255
+    assert canvas.mask_add[100, 204] == 255
+    assert canvas.mask_add[100, 208] == 0       # sem zoom o ponto chegaria até aqui
+
+
+def test_reset_zoom_shows_the_whole_photo_again(canvas):
+    canvas.zoom_at(QPointF(0, 0), 4)
+
+    canvas.reset_zoom()
+
+    assert canvas.zoom == 1
+    assert canvas.photo_rect() == WHOLE_PHOTO
+
+
+def test_zoom_survives_a_new_result_but_not_another_photo(canvas):
+    canvas.zoom_at(QPointF(0, 0), 4)
+    canvas.set_photo(np.full((200, 400, 3), BLUE_BGR, np.uint8))        # a mesma foto restaurada de novo
+    after_the_same_photo = canvas.zoom
+    canvas.set_photo(np.full((100, 300, 3), BLUE_BGR, np.uint8))        # outra foto, de outro tamanho
+    after_another_size = canvas.zoom
+    canvas.zoom_at(QPointF(0, 0), 4)
+    canvas.clear()                                                      # outra foto foi aberta...
+    canvas.set_photo(np.full((100, 300, 3), BLUE_BGR, np.uint8))        # ...por acaso do mesmo tamanho
+
+    assert after_the_same_photo == 4
+    assert after_another_size == 1
+    assert canvas.zoom == 1
+    assert canvas.photo_rect() == PhotoView.photo_rect(canvas)          # a foto inteira, encaixada na área
 
 
 @pytest.fixture
@@ -576,6 +940,49 @@ def test_cleared_editor_stays_empty_when_the_background_is_switched(editor_with_
 
     assert editor_with_result.canvas.masks() == (None, None)
     assert canvas_color(editor_with_result) not in (GREEN, BLUE)
+
+
+def test_undo_button_undoes_and_answers_to_ctrl_z(app):
+    editor = MaskEditor()
+    editor.resize(700, 400)
+    editor.canvas.set_photo(np.full((200, 400, 3), RED_BGR, np.uint8))
+    center = (editor.canvas.width() // 2, editor.canvas.height() // 2)
+    drag(editor.canvas, center, center)
+
+    editor.undo_button.click()
+
+    assert not editor.canvas.mask_add.any()
+    assert editor.undo_button.shortcut() == QKeySequence(QKeySequence.StandardKey.Undo)
+
+
+@pytest.fixture
+def zoomed_editor(app) -> MaskEditor:
+    """Editor com uma foto ampliada até o máximo pela roda do mouse."""
+    editor = MaskEditor()
+    editor.resize(700, 400)
+    editor.canvas.set_photo(np.full((200, 400, 3), RED_BGR, np.uint8))
+    editor.canvas.wheelEvent(wheel(10, 10, 20))
+    return editor
+
+
+def test_zoom_button_shows_the_zoom_and_goes_back_to_the_whole_photo(zoomed_editor):
+    text_when_zoomed = zoomed_editor.zoom_button.text()
+
+    zoomed_editor.zoom_button.click()
+
+    assert text_when_zoomed == "Zoom 800%"
+    assert zoomed_editor.canvas.zoom == 1
+    assert zoomed_editor.zoom_button.text() == "Zoom 100%"
+
+
+def test_zoom_button_goes_back_to_100_when_another_photo_is_opened(zoomed_editor):
+    zoomed_editor.clear()
+
+    assert zoomed_editor.zoom_button.text() == "Zoom 100%"
+
+
+def test_new_editor_shows_the_zoom_at_100(app):
+    assert MaskEditor().zoom_button.text() == "Zoom 100%"
 
 
 def test_editor_tools_drive_the_canvas(app):
@@ -704,6 +1111,20 @@ def test_colorize_slider_sets_the_strength(app, colorize_model):
     assert colorize_model == [0.6]
 
 
+def test_panel_announces_every_kind_of_change(app, colorize_model):
+    panel = ControlsPanel()
+    announcements = []
+    panel.changed.connect(lambda: announcements.append("mudou"))
+
+    panel.sensitivity.setValue(70)              # slider
+    panel.detect_spots.setChecked(False)        # caixa de marcar
+    panel.inpaint_method.setCurrentIndex(1)     # lista
+    panel.colorize.setChecked(True)             # etapa de IA
+    panel.colorize_strength.setValue(30)
+
+    assert len(announcements) == 5
+
+
 def test_no_checkbox_text_loses_a_character_to_a_qt_shortcut(app, colorize_model):
     panel = ControlsPanel()
 
@@ -776,6 +1197,19 @@ def test_worker_reports_the_error_instead_of_dying(app, broken_restore):
 
 # ============================================================ main_window.py
 
+def test_new_window_says_how_to_start_in_the_middle_of_the_first_tab(window, photo_file):
+    window.show()
+    QApplication.processEvents()
+    first_tab = window.tabs.currentWidget()
+
+    colors_before_any_photo = distinct_colors(first_tab)
+    window.open_photo(photo_file)
+
+    assert colors_before_any_photo > 1          # há um texto na área que seria da foto
+    shot = first_tab.grab().toImage()
+    assert shot.pixelColor(first_tab.width() // 4, first_tab.height() // 2) == RED      # com a foto, o texto some
+
+
 def test_new_window_shows_a_hint_in_the_status_bar(window):
     assert window.statusBar().currentMessage() != ""
 
@@ -813,6 +1247,73 @@ def test_status_bar_shows_the_summary_after_restoring(window, photo_file):
 def status_bar_notes(window: MainWindow) -> list[str]:
     """Os textos fixos da barra de status (os que não somem quando a mensagem muda)."""
     return [label.text() for label in window.statusBar().findChildren(QLabel)]
+
+
+def test_changing_a_control_restores_again_by_itself(restored_window):
+    window, with_defaults = restored_window, restored_window.result
+    window.rerun_timer.setInterval(10)          # nos testes, não precisa esperar o usuário parar de mexer
+
+    window.controls.sharpen.setChecked(False)   # ninguém clica em "Restaurar"
+    wait_until(lambda: window.result is not with_defaults)
+
+    assert "nitidez" not in window.result.steps
+
+
+def test_dragging_a_slider_restores_once_with_the_final_value(restore_calls, restored_window):
+    window, with_defaults = restored_window, restored_window.result
+    window.rerun_timer.setInterval(50)
+
+    for position in (55, 60, 65, 70, 75):       # o slider passa por vários valores enquanto é arrastado
+        window.controls.sensitivity.setValue(position)
+    wait_until(lambda: window.result is not with_defaults)
+    let_qt_run(0.3)         # tempo para uma restauração a mais aparecer, se existisse
+
+    assert [call["config"].damage.sensitivity for call in restore_calls] == [0.5, 0.75]
+
+
+def test_change_made_during_a_restoration_is_applied_right_after_it(window, photo_file, monkeypatch):
+    real_restore, sharpen_of_each_run, running, most_at_once = worker_module.restore, [], [], []
+
+    def slow_restore(image, config, **options):
+        sharpen_of_each_run.append(config.preprocess.sharpen)
+        running.append("mais uma")
+        most_at_once.append(len(running))
+        time.sleep(0.3)         # restauração demorada: dá tempo de o controle mudar com ela em andamento
+        result = real_restore(image, config, **options)
+        running.pop()
+        return result
+
+    monkeypatch.setattr(worker_module, "restore", slow_restore)
+    window.rerun_timer.setInterval(10)
+
+    window.open_photo(photo_file)
+    window.controls.sharpen.setChecked(False)
+    freeze = longest_freeze_until(lambda: len(sharpen_of_each_run) == 2 and window.toolbar.isEnabled())
+
+    assert sharpen_of_each_run == [True, False]
+    assert max(most_at_once) == 1               # nunca duas restaurações ao mesmo tempo
+    assert freeze < 0.15                        # a janela não ficou parada esperando a primeira terminar
+    assert "nitidez" not in window.result.steps
+
+
+def test_closing_the_window_cancels_the_pending_restoration(restore_calls, restored_window):
+    restored_window.rerun_timer.setInterval(50)
+    restored_window.controls.sharpen.setChecked(False)
+
+    restored_window.close()
+    let_qt_run(0.25)
+
+    assert len(restore_calls) == 1              # só a restauração de quando a foto foi aberta
+
+
+def test_changing_controls_without_a_photo_does_nothing(window):
+    window.rerun_timer.setInterval(10)
+
+    window.controls.sharpen.setChecked(False)
+    let_qt_run(0.2)
+
+    assert window.worker is None
+    assert window.result is None
 
 
 def test_restore_button_applies_the_current_controls(window, photo_file):
@@ -859,12 +1360,12 @@ def test_colorize_control_really_colors_a_gray_photo(window, tmp_path):
 
 @pytest.fixture
 def restore_calls(monkeypatch):
-    """Anota os argumentos nomeados de cada chamada a ``restore()`` e deixa a restauração de verdade acontecer."""
+    """Anota a configuração e os argumentos nomeados de cada chamada a ``restore()``, que acontece de verdade."""
     calls = []
     real_restore = worker_module.restore
 
     def recording_restore(image, config, **options):
-        calls.append(options)
+        calls.append({"config": config, **options})
         return real_restore(image, config, **options)
 
     monkeypatch.setattr(worker_module, "restore", recording_restore)
