@@ -189,9 +189,12 @@ def cmd_viajar(args: argparse.Namespace) -> int:
 
 def cmd_modelos(args: argparse.Namespace) -> int:
     from . import models
-    for name in args.nomes or list(models.MODELS):
-        models.download(name)
-    return 0
+    failed = models.download_all(args.nomes)
+    if failed:
+        print(f"falharam: {', '.join(failed)}. Rode de novo para tentar só os que faltam.")
+    else:
+        print(f"todos os modelos estão em {models.MODELS_DIR}")
+    return 1 if failed else 0
 
 
 def build_parser() -> argparse.ArgumentParser:

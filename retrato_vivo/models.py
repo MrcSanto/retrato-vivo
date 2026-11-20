@@ -51,7 +51,7 @@ MODELS: dict[str, tuple[str, str, str]] = {
     # Microsoft por scripts/exportar_detector_riscos.py.
     "detector_riscos": (
         "scratch_detector.onnx",
-        "",   # PENDENTE: publicar o .onnx como anexo de um Release do repositório
+        "https://github.com/MrcSanto/retrato-vivo/releases/download/modelos-v1/scratch_detector.onnx",
         "Detector de riscos (Wan et al., CVPR 2020, Microsoft, MIT) (151 MB)",
     ),
     # Restauração de rosto e colorização DDColor (ai/face_restore.py, ai/ddcolor.py). ONNX Runtime.
@@ -100,6 +100,19 @@ def download(name: str, force: bool = False) -> Path:
     return dst
 
 
+def download_all(names: list[str] | None = None) -> list[str]:
+    """Baixa os modelos pedidos (padrão: todos). Um download que falha não impede os
+    outros; devolve os nomes que falharam."""
+    failed = []
+    for name in names or list(MODELS):
+        try:
+            download(name)
+        except Exception as error:          # sem internet, endereço fora do ar etc.
+            print(f"  ERRO ao baixar {name}: {error}. O resto do programa funciona sem ele.")
+            Path(str(model_path(name)) + ".part").unlink(missing_ok=True)
+            failed.append(name)
+    return failed
+
+
 if __name__ == "__main__":
-    for n in sys.argv[1:] or list(MODELS):
-        download(n)
+    sys.exit(1 if download_all(sys.argv[1:]) else 0)
