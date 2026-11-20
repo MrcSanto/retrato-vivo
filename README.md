@@ -26,18 +26,54 @@ Restaurador de fotos antigas com OpenCV e Deep Learning. Trabalho final de
 - **Máquina do tempo**: uma foto atual vira foto de 1900, 1920, 1950, 1970 ou Polaroid.
 - _Em desenvolvimento:_ super-resolução com Deep Learning.
 
-## Como usar
+## Como rodar (qualquer PC)
+
+Precisa de Python 3.10 ou mais novo e de uns 3 GB livres (bibliotecas + modelos).
+
+**1. Baixar o projeto**
+```bash
+git clone https://github.com/MrcSanto/retrato-vivo
+cd retrato-vivo
+```
+
+**2. Criar um ambiente virtual e instalar as dependências**
+```bash
+python -m venv .venv
+.venv\Scripts\activate             # Windows (no PowerShell: .venv\Scripts\Activate.ps1)
+# source .venv/bin/activate        # Linux / macOS
+pip install -r requirements.txt
+```
+No PowerShell, se aparecer "execução de scripts desabilitada", rode antes:
+`Set-ExecutionPolicy -Scope Process Bypass`.
+
+**3. Baixar os modelos de IA** (~1,9 GB, só na primeira vez)
+```bash
+python -m retrato_vivo modelos
+```
+Se algum download falhar, rode de novo: ele só baixa o que falta.
+
+**4. (Opcional) Usar placa de vídeo NVIDIA**
+```bash
+pip install "onnxruntime-gpu[cuda,cudnn]"
+```
+Sem isso tudo funciona igual, só mais devagar (cerca de 4 s por foto na CPU, contra menos de
+1 s na GPU). A barra de status da interface mostra onde a IA está rodando.
+
+**5. Abrir a interface**
+```bash
+python -m retrato_vivo.gui
+```
+Ela já abre com as fotos de exemplo da pasta `imagens/`.
+
+### Outros comandos
 
 ```bash
-pip install -r requirements.txt
-python -m retrato_vivo modelos                       # baixa os modelos pré-treinados (~1,8 GB)
-pip install "onnxruntime-gpu[cuda,cudnn]"            # opcional: usar placa NVIDIA
-python -m retrato_vivo.gui [foto.jpg]                # interface gráfica
-python -m retrato_vivo restaurar foto.jpg -o saida --painel --explicar
-python -m retrato_vivo avaliar foto_boa.jpg          # estraga, restaura e mede PSNR/SSIM
+python -m retrato_vivo restaurar foto.jpg -o saida --painel --explicar   # restaura e explica cada etapa
+python -m retrato_vivo restaurar foto.jpg -o saida --colorir --rostos     # com cor e rostos
 python -m retrato_vivo vivo foto.jpg -o saida        # Retrato Vivo: vídeo 3D (MP4 e GIF)
-python -m retrato_vivo viajar selfie.jpg -o saida     # Máquina do tempo: todas as épocas
-python -m pytest
+python -m retrato_vivo viajar selfie.jpg -o saida    # Máquina do tempo: todas as épocas
+python -m retrato_vivo avaliar foto_boa.jpg          # estraga, restaura e mede PSNR/SSIM
+python -m pytest                                     # testes
 ```
 
 ## Interface gráfica
