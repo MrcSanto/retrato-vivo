@@ -7,6 +7,8 @@ Exemplos::
     python -m retrato_vivo restaurar foto_pb.jpg -o saida --colorir --intensidade-cor 0.7
     python -m retrato_vivo avaliar foto_boa.jpg -o avaliacao
     python -m retrato_vivo envelhecer foto_boa.jpg -o antiga.png
+    python -m retrato_vivo vivo foto.jpg -o saida                 # Retrato Vivo (vídeo 3D)
+    python -m retrato_vivo viajar selfie.jpg --epoca 1920 -o 1920.png   # Máquina do tempo
     python -m retrato_vivo modelos
 """
 
@@ -35,7 +37,8 @@ def explain(res: RestorationResult) -> str:
     d = res.diagnosis
     lines = [
         "  diagnóstico:",
-        f"    tipo            {'preto e branco / sépia' if d.monochrome else 'colorida'}",
+        f"    tipo            {'preto e branco / sépia' if d.monochrome else 'colorida'}"
+        f" (variação de cor {d.chroma_std:.1f}, {d.off_tone_pct:.1f}% fora do tom dominante)",
         f"    dominante de cor {d.cast_strength:.1f}",
         f"    ruído           {d.noise_sigma:.1f}",
         f"    tons            de {d.black_point:.0f} a {d.white_point:.0f} (0 a 255)",
@@ -48,17 +51,26 @@ def explain(res: RestorationResult) -> str:
             parts = ", ".join(f"{k}: {v}" for k, v in report.items())
             lines.append(f"    {detector:8s} {parts}")
     lines.append("  tempo (ms): " + ", ".join(f"{k} {v:.0f}" for k, v in res.timings_ms.items()))
+    from . import runtime
+    lines.append(f"  IA rodando em: {runtime.device_name() if runtime.is_available() else 'indisponível (sem onnxruntime)'}")
     return "\n".join(lines)
 
 
 def _post_stages_from_args(args: argparse.Namespace) -> list:
     """Etapas de IA ligadas pela linha de comando (importadas só se usadas)."""
     stages = []
+    if args.rostos:                     # antes da cor: o rosto é restaurado ainda em cinza
+        from .ai.face_restore import make_face_restore_stage
+        stages.append(("rostos_ia", make_face_restore_stage(args.intensidade_rostos)))
     if args.colorir:
-        from .ai.colorize import is_available, make_colorize_stage
-        if not is_available():
-            print("aviso: modelo de colorização não baixado; rode  python -m retrato_vivo modelos")
-        stages.append(("colorizacao", make_colorize_stage(args.intensidade_cor)))
+        from .ai import ddcolor
+        if args.modelo_cor == "ddcolor" and ddcolor.is_available():
+            stages.append(("colorizacao", ddcolor.make_ddcolor_stage(args.intensidade_cor)))
+        else:
+            from .ai.colorize import is_available, make_colorize_stage
+            if not is_available():
+                print("aviso: modelo de colorização não baixado; rode  python -m retrato_vivo modelos")
+            stages.append(("colorizacao", make_colorize_stage(args.intensidade_cor)))
     return stages
 
 
@@ -145,6 +157,36 @@ def cmd_avaliar(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_vivo(args: argparse.Namespace) -> int:
+    """Restaura a foto (com rostos e cor) e cria o Retrato Vivo em MP4 e GIF."""
+    from . import living_portrait as lp
+    from .ai.ddcolor import make_ddcolor_stage
+    from .ai.face_restore import make_face_restore_stage
+    img = load_image(args.entrada)
+    if not args.sem_restaurar:
+        img = restore(img, post_stages=[("rostos_ia", make_face_restore_stage()),
+                                        ("colorizacao", make_ddcolor_stage(0.8))]).image
+    portrait = lp.make_living_portrait(img, lp.LivingPortraitConfig(seconds=args.segundos))
+    out = Path(args.saida)
+    stem = Path(args.entrada).stem
+    print(f"vídeo: {lp.save_video(portrait, out / (stem + '_vivo.mp4'))}")
+    print(f"GIF:   {lp.save_gif(portrait, out / (stem + '_vivo.gif'))}")
+    save_image(out / (stem + "_profundidade.png"), lp.depth_colormap(portrait.depth))
+    print(f"{len(portrait.frames)} quadros em {sum(portrait.timings_ms.values()) / 1000:.1f} s ({portrait.device})")
+    return 0
+
+
+def cmd_viajar(args: argparse.Namespace) -> int:
+    from .time_machine import ERAS, travel
+    img = load_image(args.entrada)
+    eras = list(ERAS) if args.epoca == "todas" else [args.epoca]
+    out = Path(args.saida)
+    for era in eras:
+        dst = out if len(eras) == 1 and out.suffix else out / f"{Path(args.entrada).stem}_{era}.png"
+        print(f"{ERAS[era].name}: {save_image(dst, travel(img, era, seed=args.semente))}")
+    return 0
+
+
 def cmd_modelos(args: argparse.Namespace) -> int:
     from . import models
     for name in args.nomes or list(models.MODELS):
@@ -159,8 +201,8 @@ def build_parser() -> argparse.ArgumentParser:
     def common(sp: argparse.ArgumentParser) -> None:
         sp.add_argument("--sensibilidade", type=float, default=0.5,
                         help="detecção de danos, de 0 (só o óbvio) a 1 (pega tudo); padrão 0.5")
-        sp.add_argument("--metodo", choices=("telea", "ns"), default="telea",
-                        help="método de preenchimento")
+        sp.add_argument("--metodo", choices=("ia", "telea", "ns"), default="ia",
+                        help="preenchimento: ia (LaMa nos buracos largos, padrão), telea ou ns")
         sp.add_argument("--max-lado", type=int, default=2048,
                         help="fotos maiores são reduzidas para este tamanho")
         sp.add_argument("--perdas-grandes", action="store_true",
@@ -178,6 +220,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="colore fotos P&B/sépia com Deep Learning (fotos coloridas passam direto)")
     r.add_argument("--intensidade-cor", type=float, default=0.8,
                    help="força da colorização, de 0 (cinza) a 1 (cor da rede); padrão 0.8")
+    r.add_argument("--modelo-cor", choices=("ddcolor", "zhang"), default="ddcolor",
+                   help="ddcolor (mais realista, padrão) ou zhang (mais discreto)")
+    r.add_argument("--rostos", action="store_true", help="restaura os rostos com IA (GFPGAN)")
+    r.add_argument("--intensidade-rostos", type=float, default=0.7,
+                   help="mistura do rosto restaurado com o original, de 0 a 1; padrão 0.7")
     common(r)
     r.set_defaults(func=cmd_restaurar)
 
@@ -192,6 +239,21 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("-o", "--saida", default="envelhecida.png")
     e.add_argument("--semente", type=int, default=None)
     e.set_defaults(func=cmd_envelhecer)
+
+    v = sub.add_parser("vivo", help="Retrato Vivo: a foto restaurada vira um vídeo com efeito 3D")
+    v.add_argument("entrada")
+    v.add_argument("-o", "--saida", default="saida")
+    v.add_argument("--segundos", type=float, default=4.0, help="duração de uma volta da câmera")
+    v.add_argument("--sem-restaurar", action="store_true", help="usa a foto como está, sem restaurar antes")
+    v.set_defaults(func=cmd_vivo)
+
+    from .time_machine import ERAS
+    tm = sub.add_parser("viajar", help="Máquina do tempo: a foto vira foto de outra época")
+    tm.add_argument("entrada")
+    tm.add_argument("--epoca", choices=[*ERAS, "todas"], default="todas")
+    tm.add_argument("-o", "--saida", default="saida")
+    tm.add_argument("--semente", type=int, default=None)
+    tm.set_defaults(func=cmd_viajar)
 
     m = sub.add_parser("modelos", help="baixa os modelos pré-treinados para models/")
     m.add_argument("nomes", nargs="*", help="padrão: todos")
