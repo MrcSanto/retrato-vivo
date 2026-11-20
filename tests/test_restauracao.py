@@ -93,6 +93,46 @@ def test_sepia_is_monochrome_and_becomes_neutral_gray():
     assert preprocess.is_gray(out) and "cor_neutralizada" in log.steps
 
 
+def sepia_gradient(h: int = 480, w: int = 640) -> np.ndarray:
+    """Degradê do preto ao branco em sépia: o máximo de contraste possível."""
+    g = np.tile(np.linspace(0, 255, w, dtype=np.float32), (h, 1)).astype(np.uint8)
+    return sepia(cv2.cvtColor(g, cv2.COLOR_GRAY2BGR))
+
+
+def test_high_contrast_sepia_is_monochrome():
+    """Sépia de alto contraste: a cor varia muito (sombras marrons, claros creme),
+    mas é sempre o mesmo tom. O critério antigo (só variação) dizia "colorida"."""
+    for img in (sepia_gradient(),
+                grain(sepia_gradient(), 8.0, np.random.default_rng(0)),
+                sepia(aging.contrast(aging.black_and_white(make_scene()), 1.6))):
+        diag = preprocess.diagnose(img)
+        assert diag.chroma_std >= preprocess.MONOCHROME_MAX_CHROMA_STD   # o caso que falhava
+        assert diag.monochrome and diag.off_tone_pct < preprocess.SEPIA_MAX_OFF_TONE_PCT
+        log = preprocess.StepLog()
+        out = preprocess.normalize(img, preprocess.PreprocessConfig(), diag, log)
+        assert preprocess.is_gray(out)                                    # to_neutral_gray
+        assert log.notes["cor_neutralizada"].startswith("foto P&B/sépia")
+
+
+def test_low_saturation_color_photo_stays_colored():
+    """Foto colorida apagada continua colorida: tem vários tons, não um só."""
+    faded = aging.saturation(make_scene(), 0.3)
+    assert not preprocess.diagnose(faded).monochrome
+    # Azul de um lado e laranja do outro: tons opostos, que uma reta no plano
+    # de cor confundiria com um tom só.
+    two_tones = np.zeros((300, 400, 3), np.uint8)
+    two_tones[:, :200], two_tones[:, 200:] = (170, 140, 120), (110, 140, 175)
+    diag = preprocess.diagnose(cv2.GaussianBlur(two_tones, (0, 0), 5))
+    assert not diag.monochrome and diag.off_tone_pct > 20
+
+
+def test_sepia_gradient_goes_through_pipeline_as_monochrome():
+    res = restore(sepia_gradient())
+    assert res.diagnosis.monochrome                 # a colorização (ai/colorize.py) vai agir
+    assert "P&B" in res.notes["cor_neutralizada"]
+    assert "fora do tom dominante" in explain(res)
+
+
 def test_good_color_photo_keeps_its_colors():
     """Foto colorida sem dominante: a etapa de cor é pulada e explicada."""
     img = make_scene()

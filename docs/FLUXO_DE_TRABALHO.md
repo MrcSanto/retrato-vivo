@@ -151,7 +151,10 @@ O professor avalia o **envolvimento de cada um pelos commits**.
 
 ### 6.1 Igor Zanette: pré-processamento, detecção e preenchimento de danos
 
-**Status: ✅ implementado, revisado com 13 fotos reais e testado (15/11).**
+**Status: ✅ implementado, revisado com 13 fotos reais, testado e na `main` (15/11).
+Já está integrado à colorização (Marco) e à interface (Marcos Paulo). Diagnóstico de sépia
+de alto contraste corrigido (20/11). Plano de IA do [diagnóstico](DIAGNOSTICO_RESTAURACAO.md)
+aplicado (20/11): detector de riscos com IA, LaMa, GPU/CPU.**
 
 Explicação completa, técnicas, métricas e limitações: **[COMO_FUNCIONA.md](COMO_FUNCIONA.md)**.
 
@@ -165,14 +168,36 @@ Resumo do que existe:
 - Preenchimento por inpainting (Telea ou Navier-Stokes).
 - Avaliação objetiva: envelhecer uma foto boa, restaurar e medir (PSNR, SSIM, F1).
 - Efeitos de época prontos para a Máquina do tempo (`aging.py`).
-- 35 testes automáticos.
+- 38 testes automáticos em `tests/test_restauracao.py`.
+
+**Feito:**
+- [x] 13 commits desta parte na `main` (15/11).
+- [x] Integração com a colorização: a etapa do Marco usa `result.diagnosis.monochrome`.
+- [x] Integração com a interface: o editor de máscara do Marcos Paulo usa `mask_add` /
+  `mask_remove`, e a interface mostra `steps`, `notes`, `damage.stats` e `timings_ms`.
+  O apoio previsto ao editor não foi necessário.
+- [x] **Sépia de alto contraste diagnosticada como colorida** (apontado pelo Marco, 20/11):
+  além da variação de cor, `diagnose` agora mede quanto da cor fica fora do tom dominante
+  (`off_tone_pct`). Fotos reais certas: 12/13 → 13/13 (`foto_rasgada2` era o erro); com 63
+  variações sintéticas, 46/76 → 71/76. Detalhes em [COMO_FUNCIONA.md](COMO_FUNCIONA.md).
+  Falta conferir a colorização de ponta a ponta com OpenCV 4.x e os modelos baixados.
+
+- [x] **IA na restauração (20/11):** detector de riscos da Microsoft convertido para ONNX
+  (`damage_ai.py`), LaMa nas áreas grandes (`inpaint.py`, método `ia`), execução na GPU com
+  queda automática para a CPU (`runtime.py`). Também, a pedido do Igor, nas áreas dos colegas:
+  `ai/face_restore.py` (GFPGAN) e `ai/ddcolor.py` (Marco), controles novos e navegação de
+  pasta na interface (Marcos Paulo). Detalhes e números em
+  [DIAGNOSTICO_RESTAURACAO.md](DIAGNOSTICO_RESTAURACAO.md#0-o-que-já-foi-aplicado-2011-pelo-igor-na-rtx-4080).
 
 **Pendências do Igor:**
-- [x] Commits desta parte, na branch `igor/restauracao-classica`.
-- [ ] Enviar a branch para o GitHub e abrir o Pull Request para a `main`.
+- [ ] Publicar `scratch_detector.onnx` num Release do repositório e pôr a URL em `models.py`.
+- [ ] Rodar os testes com OpenCV 4.x, a versão fixada agora no `requirements.txt`.
+  A parte do Igor foi desenvolvida e testada no OpenCV 5.
 - [ ] Vinco que cruza cabelo ou outra textura ainda fica com um trecho sem reparo.
 - [ ] Detecção de rasgos (`detect_large_losses`) é básica e fica desligada por padrão.
-- [ ] Apoiar o Marcos Paulo no editor de máscara (`mask_add` / `mask_remove`).
+
+**Ainda sem responsável, com a área do Igor como candidata:** correção de perspectiva
+(seção 6.4), Retrato Vivo e Máquina do tempo (seção 7).
 
 ---
 
@@ -189,8 +214,10 @@ Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
 2. ✅ **Colorização (prioridade 1).** Feito em `ai/colorize.py`: `colorize` (etapa pronta),
    `make_colorize_stage(intensidade)` (para o slider da GUI) e `colorize_image(img, intensidade)`.
    Linha de comando: `restaurar foto.jpg --colorir --intensidade-cor 0.8`. 10 testes em `tests/test_ai.py`.
-   **Pendente (Igor):** foto sépia de alto contraste é diagnosticada como colorida
-   (`chroma_std` passa de 6), e aí a colorização é pulada. Plano original, para referência:
+   ✅ **Corrigido (Igor, 20/11):** foto sépia de alto contraste era diagnosticada como colorida
+   (`chroma_std` passava de 6) e a colorização era pulada. Agora `diagnose` também aceita
+   como sépia a foto cuja cor está quase toda num tom só (`off_tone_pct < 5`). Plano original,
+   para referência:
    Modelo de Zhang et al. (ECCV 2016) via `cv2.dnn`:
    - Arquivos: `colorization_deploy_v2.prototxt`, `colorization_release_v2.caffemodel`,
      `pts_in_hull.npy` (repositório `richzhang/colorization`). Registrar em `models.py`.
@@ -300,11 +327,11 @@ O professor pediu que o sistema faça algo além de restaurar. **Decisão (15/11
 
 | | Ideia | O que faz | Técnicas | Responsável |
 |---|---|---|---|---|
-| ⭐ **Destaque** | **Retrato Vivo (foto em movimento)** | Transforma a foto restaurada num vídeo curto com **efeito 3D de paralaxe**: a câmera "passeia" e a pessoa se destaca do fundo. Dá nome ao projeto. | Estimativa de profundidade com DL (MiDaS small, ONNX via `cv2.dnn`), *warping* por camadas de profundidade, inpainting das bordas reveladas, exportação em MP4/GIF (`cv2.VideoWriter`) | **A definir** |
-| **Bônus** | **Máquina do tempo** | O inverso da restauração: a selfie do professor vira foto de 1900, 1920, 1950, 1970 ou Polaroid dos anos 90. | Combinar os efeitos de `aging.py` (sépia, grão, vinheta, riscos) em presets por época, mais molduras e data | **A definir** |
+| ⭐ **Destaque** | **Retrato Vivo (foto em movimento)** | Transforma a foto restaurada num vídeo curto com **efeito 3D de paralaxe**: a câmera "passeia" e a pessoa se destaca do fundo. Dá nome ao projeto. | Profundidade com DL (Depth Anything V2 Small, no lugar do MiDaS), camadas por Otsu, fundo escondido com LaMa, `cv2.remap`, MP4/GIF | ✅ **Igor (20/11)** |
+| **Bônus** | **Máquina do tempo** | O inverso da restauração: a selfie do professor vira foto de 1900, 1920, 1950, 1970 ou Polaroid dos anos 90. | Efeitos de `aging.py` em presets por época, molduras, data; “ida e volta” com a restauração | ✅ **Igor (20/11)** |
 
-A equipe precisa definir os responsáveis na aula de 16/11, de forma a manter os
-commits equilibrados.
+Os dois foram implementados pelo Igor em 20/11, com abas próprias na interface. Explicação e
+roteiro para a apresentação: **[DIFERENCIAL.md](DIFERENCIAL.md)**.
 
 ### O que já existe da parte do Igor para cada extra
 

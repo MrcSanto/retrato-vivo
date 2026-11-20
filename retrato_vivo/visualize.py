@@ -14,6 +14,7 @@ from .damage import DamageResult
 COLOR_SCRATCH = (0, 0, 255)      # vermelho
 COLOR_CREASE = (0, 128, 255)     # laranja
 COLOR_SPOT = (0, 220, 255)       # amarelo
+COLOR_AI = (255, 120, 0)         # azul: riscos achados pela IA
 COLOR_LOSS = (255, 0, 255)       # magenta
 COLOR_MANUAL = (255, 255, 0)     # ciano: pintado pelo usuário
 COLOR_FACE = (0, 200, 0)         # verde: rosto protegido
@@ -23,7 +24,7 @@ def damage_map(img: np.ndarray, result: DamageResult, alpha: float = 0.6,
                draw_faces: bool = True) -> np.ndarray:
     """A foto com os danos detectados pintados por cima.
 
-    Vermelho = risco, laranja = vinco, amarelo = mancha, magenta = perda grande, ciano = área
+    Azul = risco achado pela IA, vermelho = risco, laranja = vinco, amarelo = mancha, magenta = perda grande, ciano = área
     adicionada manualmente, contorno verde = rosto protegido.
     """
     out = img.copy()
@@ -32,12 +33,15 @@ def damage_map(img: np.ndarray, result: DamageResult, alpha: float = 0.6,
         if region.any():
             out[region] = (out[region] * (1 - alpha) + np.array(color) * alpha).astype(np.uint8)
 
+    if result.ai_scratches is not None:
+        paint(result.ai_scratches, COLOR_AI)    # primeiro: as detecções clássicas ficam por cima
     paint(result.scratches, COLOR_SCRATCH)
     paint(result.creases, COLOR_CREASE)
     paint(result.spots, COLOR_SPOT)
     paint(result.losses, COLOR_LOSS)
 
-    automatic = (result.scratches | result.creases | result.spots | result.losses).astype(np.uint8)
+    automatic = (result.scratches | result.creases | result.spots | result.losses
+                 | (result.ai_scratches if result.ai_scratches is not None else False)).astype(np.uint8)
     near_automatic = cv2.dilate(automatic, np.ones((7, 7), np.uint8)).astype(bool)
     paint((result.mask > 0) & ~near_automatic, COLOR_MANUAL)
 

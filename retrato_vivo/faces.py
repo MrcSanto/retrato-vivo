@@ -19,18 +19,13 @@ _DETECTOR = None
 _DETECTION_SIDE = 640  # o YuNet roda numa cópia reduzida: rápido e suficiente
 
 
-def detect_faces(img: np.ndarray, min_score: float = 0.6) -> list[Box]:
-    """Retorna as caixas dos rostos, na resolução de ``img``.
-
-    Se o modelo não foi baixado (``python -m retrato_vivo modelos``),
-    retorna lista vazia e o resto do pipeline funciona sem a proteção.
-    """
+def _run_yunet(img: np.ndarray, min_score: float) -> tuple[np.ndarray | None, float]:
+    """Roda o YuNet numa cópia reduzida. Retorna (detecções cruas, fator de escala)."""
     global _DETECTOR
     if not models.is_available("yunet"):
-        return []
+        return None, 1.0
     if img.ndim == 2:
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-
     small, k = resize_max_side(img, _DETECTION_SIDE)
     h, w = small.shape[:2]
     if _DETECTOR is None:
@@ -39,16 +34,37 @@ def detect_faces(img: np.ndarray, min_score: float = 0.6) -> list[Box]:
     _DETECTOR.setInputSize((w, h))
     _DETECTOR.setScoreThreshold(min_score)
     _, found = _DETECTOR.detect(small)
+    return found, k
+
+
+def detect_faces(img: np.ndarray, min_score: float = 0.6) -> list[Box]:
+    """Retorna as caixas dos rostos, na resolução de ``img``.
+
+    Se o modelo não foi baixado (``python -m retrato_vivo modelos``),
+    retorna lista vazia e o resto do pipeline funciona sem a proteção.
+    """
+    return [box for box, _ in detect_faces_landmarks(img, min_score)]
+
+
+def detect_faces_landmarks(img: np.ndarray, min_score: float = 0.6) -> list[tuple[Box, np.ndarray]]:
+    """Como ``detect_faces``, mas também com os 5 pontos de cada rosto.
+
+    Pontos (5 x 2, em pixels de ``img``), na ordem do YuNet: olho que aparece
+    à esquerda na foto, olho da direita, ponta do nariz, canto da boca da
+    esquerda, canto da boca da direita. Servem para alinhar o rosto antes da
+    restauração de rosto com IA.
+    """
+    found, k = _run_yunet(img, min_score)
     if found is None:
         return []
-
     H, W = img.shape[:2]
-    boxes: list[Box] = []
+    faces = []
     for f in found:
         x, y, bw, bh = (int(v) for v in (f[:4] / k).round())  # volta à escala original
         x, y = max(0, x), max(0, y)
-        boxes.append((x, y, min(bw, W - x), min(bh, H - y)))
-    return boxes
+        points = (f[4:14] / k).reshape(5, 2).astype(np.float32)
+        faces.append(((x, y, min(bw, W - x), min(bh, H - y)), points))
+    return faces
 
 
 def faces_region(shape: tuple[int, ...], boxes: list[Box]) -> np.ndarray:

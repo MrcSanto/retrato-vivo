@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
+from . import damage_ai
 from .faces import Box, detect_faces, faces_region
 
 
@@ -43,6 +44,7 @@ class DamageConfig:
     detect_spots: bool = True
     detect_large_losses: bool = False     # rasgos/áreas brancas (desligado por padrão)
     protect_faces: bool = True
+    use_ai: bool = True                   # soma o detector de riscos com IA (damage_ai.py), se baixado
 
     # --- riscos ---
     scratch_min_length: float = 0.025     # comprimento mínimo (fração do maior lado)
@@ -64,6 +66,7 @@ class DamageResult:
     creases: np.ndarray                   # bool: só os vincos
     spots: np.ndarray                     # bool: só as manchas
     losses: np.ndarray                    # bool: só as perdas grandes
+    ai_scratches: np.ndarray | None = None  # bool: riscos achados pela IA (None = IA não rodou)
     faces: list[Box] = field(default_factory=list)
     stats: dict[str, float] = field(default_factory=dict)
     # relatório: detector -> {teste: quantas candidatas ele descartou}
@@ -431,7 +434,11 @@ def detect_damage(img: np.ndarray, cfg: DamageConfig | None = None,
         losses, report["perdas"] = detect_large_losses(gray, cfg)
 
     # Junta tudo e dá uma pequena margem: o dano costuma ter uma "auréola".
-    mask = (scratches | creases | spots | losses).astype(np.uint8) * 255
+    ai = None
+    if cfg.use_ai and damage_ai.is_available():
+        ai, report["riscos_ia"] = damage_ai.detect_scratches_ai(img, cfg.sensitivity)
+
+    mask = (scratches | creases | spots | losses | (ai if ai is not None else nothing)).astype(np.uint8) * 255
     if cfg.dilate_px > 0 and mask.any():
         mask = cv2.dilate(mask, _disk(2 * cfg.dilate_px * _scale(gray.shape) + 1))
     if mask_add is not None:
@@ -443,8 +450,9 @@ def detect_damage(img: np.ndarray, cfg: DamageConfig | None = None,
         "area_danificada_pct": 100.0 * float((mask > 0).mean()),
         "riscos": float(report.get("riscos", {}).get("aceitos", 0)),
         "vincos": float(report.get("vincos", {}).get("aceitos", 0)),
+        "riscos_ia": float(report.get("riscos_ia", {}).get("aceitos", 0)),
         "manchas": float(report.get("manchas", {}).get("aceitos", 0)),
         "rostos_protegidos": float(len(faces)),
     }
     return DamageResult(mask=mask, scratches=scratches, creases=creases, spots=spots, losses=losses,
-                        faces=faces, stats=stats, report=report)
+                        ai_scratches=ai, faces=faces, stats=stats, report=report)

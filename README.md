@@ -15,49 +15,52 @@ Restaurador de fotos antigas com OpenCV e Deep Learning. Trabalho final de
 - Remove amarelado/sépia, recupera o contraste de fotos desbotadas, reduz a granulação
   (Non-Local Means) e realça detalhes (CLAHE + nitidez).
 - Explica o que fez: mapa de danos, painel com todas as etapas e o motivo de cada decisão.
-- **Colore** fotos preto e branco com uma rede neural (Zhang et al., ECCV 2016).
+- Usa **IA para achar riscos** (rede da Microsoft treinada em fotos antigas) e para
+  **reconstruir áreas grandes** como rasgos (LaMa).
+- **Colore** fotos preto e branco (DDColor, ICCV 2023, ou Zhang, ECCV 2016) e
+  **restaura rostos** (GFPGAN).
+- Roda as redes na **GPU (CUDA)** quando houver placa NVIDIA, e na CPU em qualquer PC.
 - Tem **interface gráfica**: comparação antes e depois, a foto em cada etapa, ajustes da
   restauração e um editor para corrigir a detecção à mão.
-- _Em desenvolvimento:_ super-resolução com Deep Learning, **Retrato Vivo** (a foto
-  restaurada ganha movimento 3D) e **Máquina do tempo** (uma foto atual vira foto de
-  outra época).
+- **Retrato Vivo** (o diferencial): a foto restaurada vira um vídeo com efeito 3D.
+- **Máquina do tempo**: uma foto atual vira foto de 1900, 1920, 1950, 1970 ou Polaroid.
+- _Em desenvolvimento:_ super-resolução com Deep Learning.
 
 ## Como usar
 
 ```bash
 pip install -r requirements.txt
-python -m retrato_vivo modelos                       # baixa os modelos pré-treinados
+python -m retrato_vivo modelos                       # baixa os modelos pré-treinados (~1,8 GB)
+pip install "onnxruntime-gpu[cuda,cudnn]"            # opcional: usar placa NVIDIA
 python -m retrato_vivo.gui [foto.jpg]                # interface gráfica
 python -m retrato_vivo restaurar foto.jpg -o saida --painel --explicar
 python -m retrato_vivo avaliar foto_boa.jpg          # estraga, restaura e mede PSNR/SSIM
+python -m retrato_vivo vivo foto.jpg -o saida        # Retrato Vivo: vídeo 3D (MP4 e GIF)
+python -m retrato_vivo viajar selfie.jpg -o saida     # Máquina do tempo: todas as épocas
 python -m pytest
 ```
 
 ## Interface gráfica
 
-Abra com `python -m retrato_vivo.gui`. Para já começar com uma foto, passe o arquivo:
-`python -m retrato_vivo.gui foto.jpg`.
+Abra com `python -m retrato_vivo.gui`. Sem argumentos, já abre a primeira foto de `imagens/`
+(fotos de exemplo); ◀ e ▶ passam pelas outras fotos da pasta.
 
-1. **Abrir:** clique em "Abrir" (Ctrl+O) ou arraste o arquivo para a janela. A restauração
-   começa sozinha e não trava a janela.
-2. **Antes e depois:** arraste a linha branca sobre a foto. A original fica à esquerda
-   ("Antes") e a restaurada à direita ("Depois").
-3. **Etapas:** clique em uma etapa para ver a foto naquele ponto, o que a etapa faz e o que
-   ela decidiu nessa foto. O rodapé mostra as etapas puladas e o tempo de cada fase.
-4. **Controles:** no painel da esquerda, mude a sensibilidade, ligue ou desligue correções
-   e marque "Colorir foto P&B". A restauração é refeita sozinha assim que você para de
-   mexer. O botão "Restaurar" refaz na hora.
-5. **Máscara:** com o "Pincel", pinte o dano que a detecção não pegou. Com a "Borracha",
-   desmarque o que foi marcado por engano. "Desfazer" (Ctrl+Z) volta um traço. Gire a roda
-   do mouse para ampliar a foto e arraste com o botão direito para movê-la. O botão "Zoom"
-   volta à foto inteira. "Aplicar correções" refaz a restauração com o que foi pintado.
-6. **Salvar:** "Salvar resultado" (Ctrl+S) grava a foto restaurada. "Exportar comparativo"
-   grava o antes e o depois lado a lado.
+1. **Abrir:** clique em "Abrir" (Ctrl+O) ou arraste a foto para a janela. A restauração começa sozinha.
+2. **Antes e depois:** arraste a linha branca sobre a foto.
+3. **Painel da esquerda:** "Força da limpeza", "Colorir" e "Melhorar rostos". O resto fica em
+   "Ajustes avançados". A restauração é refeita sozinha quando você para de mexer.
+4. **Etapas:** a foto em cada ponto do processamento e o que cada etapa decidiu.
+5. **Máscara:** pinte com o pincel o que a detecção não pegou (rasgos, por exemplo) e clique em
+   "Aplicar correções". A borracha desmarca o que foi marcado por engano.
+6. **Retrato Vivo:** "Criar Retrato Vivo" transforma a foto restaurada num vídeo 3D; salve em MP4 ou GIF.
+7. **Máquina do tempo:** escolha uma época; "Restaurar de volta" mostra a restauração desfazendo o
+   envelhecimento.
+8. **Salvar:** "Salvar resultado" (Ctrl+S) e "Exportar comparativo".
 
-A barra de status mostra quantos riscos, vincos e manchas foram encontrados, a área
-danificada, os rostos protegidos e o tempo total.
+A barra de status mostra os danos encontrados, o tempo e se a IA está rodando na GPU ou na CPU.
 
 ## Documentação
 
 - **[docs/COMO_FUNCIONA.md](docs/COMO_FUNCIONA.md)**: o que cada arquivo e cada etapa faz.
+- **[docs/DIFERENCIAL.md](docs/DIFERENCIAL.md)**: Retrato Vivo e Máquina do tempo, e o roteiro da apresentação.
 - **[docs/FLUXO_DE_TRABALHO.md](docs/FLUXO_DE_TRABALHO.md)**: divisão de tarefas, prazos e regras para contribuir.

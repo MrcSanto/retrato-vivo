@@ -1,8 +1,10 @@
-# Como funciona a restauração clássica
+# Como funciona a restauração
 
 Guia da parte do Igor: **pré-processamento, detecção e preenchimento de danos**.
-Tudo aqui é processamento de imagens clássico com OpenCV; a única rede neural é o
-detector de rostos, usado para proteger os rostos.
+A base é processamento de imagens clássico com OpenCV. Desde 20/11, duas redes neurais
+reforçam os pontos onde as regras não davam conta: um **detector de riscos** treinado em
+fotos antigas reais e o **LaMa**, que preenche áreas grandes. Elas rodam na GPU (CUDA)
+quando houver e na CPU nos outros PCs (seção 9).
 
 Em uma frase: o sistema **mede** a foto, corrige cor e contraste só se precisar,
 **marca** onde há riscos, vincos e manchas, **apaga** o que marcou e dá o acabamento.
@@ -14,8 +16,10 @@ Em uma frase: o sistema **mede** a foto, corrige cor e contraste só se precisar
 | [`io_utils.py`](../retrato_vivo/io_utils.py) | Como abrir e salvar qualquer foto (acentos, celular deitado, PNG transparente, 16 bits)? |
 | [`preprocess.py`](../retrato_vivo/preprocess.py) | A foto está amarelada, desbotada, granulada? Como corrigir sem estragar? |
 | [`faces.py`](../retrato_vivo/faces.py) | Onde estão os rostos (para protegê-los)? |
-| [`damage.py`](../retrato_vivo/damage.py) | **Onde** estão os riscos, vincos e manchas? |
-| [`inpaint.py`](../retrato_vivo/inpaint.py) | Como **apagar** o que foi marcado? |
+| [`damage.py`](../retrato_vivo/damage.py) | **Onde** estão os riscos, vincos e manchas? (regras) |
+| [`damage_ai.py`](../retrato_vivo/damage_ai.py) | Quais riscos uma **rede treinada em fotos antigas** acha? (soma com as regras) |
+| [`inpaint.py`](../retrato_vivo/inpaint.py) | Como **apagar** o que foi marcado? (Telea nos riscos finos, LaMa nas áreas grandes) |
+| [`runtime.py`](../retrato_vivo/runtime.py) | As redes pesadas rodam na GPU ou na CPU? |
 | [`visualize.py`](../retrato_vivo/visualize.py) | Como mostrar o que foi feito (mapa de danos, antes/depois, painel)? |
 | [`pipeline.py`](../retrato_vivo/pipeline.py) | Em que ordem tudo roda? |
 | [`aging.py`](../retrato_vivo/aging.py) | Como estragar uma foto boa de propósito, para testar? (os mesmos efeitos montam a Máquina do tempo) |
@@ -35,8 +39,8 @@ Quando não precisa, a etapa é pulada e o motivo fica registrado.
 | 2 | Diagnóstico | Mede cor, ruído e contraste | Estatísticas em LAB, filtro de ruído | Sempre (não altera nada) |
 | 3 | Cor | Foto sépia/P&B vira cinza neutro; foto colorida amarelada perde o amarelo | Espaço LAB | Só se houver dominante de cor |
 | 4 | Contraste | Devolve o preto e o branco a uma foto desbotada | Esticamento de histograma | Só se a foto não usa toda a faixa de tons |
-| 5 | Detectar danos | Marca riscos, vincos e manchas numa máscara | Morfologia matemática, componentes conexos | Sempre |
-| 6 | Apagar danos | Preenche a máscara a partir da vizinhança | Inpainting (Telea ou Navier-Stokes) | Onde a máscara marcou |
+| 5 | Detectar danos | Marca riscos, vincos e manchas numa máscara | Morfologia matemática, componentes conexos **+ U-Net (IA)** | Sempre |
+| 6 | Apagar danos | Preenche a máscara | Telea nos riscos finos; **LaMa (IA)** nos buracos largos | Onde a máscara marcou |
 | 7 | Ruído | Reduz a granulação | Non-Local Means | Só se o ruído medido for alto; a força acompanha o ruído |
 | 8 | Contraste local | Recupera detalhe em áreas escuras e claras | CLAHE misturado com o original | Sempre, em dose leve (40%) |
 | 9 | Nitidez | Realça contornos | Máscara de desfoque | Sempre |
@@ -47,8 +51,14 @@ realçaria justamente os riscos.
 
 ### Como cada medida do diagnóstico é feita
 
-- **É preto e branco/sépia?** Uma foto sépia tem a cor deslocada, mas quase sem
-  *variação* de cor entre os pixels. Mede-se o desvio padrão dos canais de cor (a, b do LAB).
+- **É preto e branco/sépia?** Dois testes; basta um passar:
+  1. A cor quase não *varia* entre os pixels (desvio padrão de a, b do LAB menor que 6).
+     Pega P&B e sépia suave: o sépia desloca a cor, mas varia pouco.
+  2. A cor varia, mas é **sempre o mesmo tom**: menos de 5% da cor fica fora de uma faixa
+     de ±30° em torno do tom dominante. Pega sépia de alto contraste, em que as sombras
+     são marrom escuro e os claros são creme. É como café com leite: marrom escuro e bege
+     são o mesmo tom em quantidades diferentes. Uma foto colorida tem vários tons (céu,
+     pele, folhas) e fica bem acima de 10%.
 - **Tem dominante de cor?** Toda foto sem dominante tem algum pixel neutro (um branco,
   um cinza). Se nem o 1% de pixels mais neutros é neutro, a cor deles é a dominante.
 - **Quanto ruído?** Um filtro cancela as regiões lisas e sobra quase só ruído; a
@@ -128,10 +138,10 @@ No mapa de danos: **vermelho** = risco, **laranja** = vinco, **amarelo** = manch
 | Controle | Campo | Efeito |
 |---|---|---|
 | Sensibilidade (0 a 1) | `cfg.damage.sensitivity` | Mais alto pega mais dano e mais falso positivo |
-| Ligar/desligar riscos, vincos, manchas, rasgos | `cfg.damage.detect_*` | |
-| Proteger rostos | `cfg.damage.protect_faces` | |
-| Método de preenchimento | `cfg.inpaint_method` | `telea` (rápido) ou `ns` (melhor em áreas maiores) |
-| Força do ruído | `cfg.preprocess.denoise_strength` | Multiplica a dose automática |
+| Riscos com IA | `cfg.damage.use_ai` | Soma o detector de riscos com IA (padrão: ligado) |
+| Ligar/desligar riscos, vincos, manchas | `cfg.damage.detect_*` | |
+| Método de preenchimento | `cfg.inpaint_method` | `ia` (padrão: LaMa nos buracos largos), `telea` ou `ns` |
+| Força do ruído | `cfg.preprocess.denoise_strength` | 1 = automático; acima de 1 limpa mesmo foto sem ruído |
 | Contraste local | `cfg.preprocess.clahe_strength` | 0 a 1 |
 | Nitidez | `cfg.preprocess.sharpen_amount` | |
 | Ligar/desligar cada correção | `cfg.preprocess.remove_color_cast`, `auto_levels`, `denoise`, `clahe`, `sharpen` | |
@@ -160,20 +170,24 @@ Resultados com a sensibilidade padrão (0,5):
 *Precisão*: do que foi marcado, quanto era dano. *Revocação*: do dano que existia,
 quanto foi marcado. *PSNR*: quanto maior, mais parecida com a original.
 
-Testes automáticos: `python -m pytest` (35 testes, um bloco por arquivo).
+Testes automáticos: `python -m pytest` (38 testes da restauração, um bloco por arquivo).
 
 ## 7. Limitações conhecidas
 
 - **Dano dentro de textura** (cabelo, plumas) é ignorado de propósito; um vinco que
   cruza o cabelo fica com um trecho sem reparo. Solução: pincel do editor de máscara.
-- **Foto coberta de arranhões** (daguerreótipos como `foto_risco1` e `foto_risco2`):
-  quando o dano está em toda parte, ele é tratado como textura e quase nada muda.
-- **Pedaços faltando** (`foto_rasgada1` e `2`): o preenchimento clássico não inventa
-  o que sumiu; borra áreas grandes. Precisaria de inpainting com Deep Learning.
+- **Rasgos não são achados sozinhos.** O papel exposto de um rasgo parece um fundo
+  claro qualquer: uma regra "claro e liso" marcaria 31% do fundo de estúdio da `foto1`
+  e 27% do céu da `foto_boa2`. O fluxo é: **pintar o rasgo com o pincel** e deixar o LaMa
+  preencher. O detector com IA pega as rachaduras em volta, não o papel exposto.
+- **Foto coberta de arranhões** (`foto_risco1`): mesmo com a IA, sobra muito risco.
 - **Fotos muito detalhadas** (fachadas, multidões) ainda geram manchas falsas, em
   torno de 1% da área.
 - **Foto colorida sem nenhum pixel neutro** (ex.: `foto_boa3`) pode ter a cor
   levemente esfriada pela correção de dominante.
+- **Foto colorida que desbotou toda para um tom só** (cópias dos anos 70, por exemplo) pode
+  ser tratada como sépia e recolorida pela rede. Aconteceu em 2 de 7 simulações; nenhuma
+  das fotos coloridas reais do projeto foi afetada.
 - **AVIF** exige `pillow>=11.3`; com Pillow antigo o arquivo é ignorado com aviso.
 
 ## 8. Perguntas que o professor pode fazer
@@ -187,7 +201,40 @@ Testes automáticos: `python -m pytest` (35 testes, um bloco por arquivo).
   o ruído. O NLM faz a média só entre trechos parecidos da imagem.
 - **Por que CLAHE e não equalização de histograma comum?** A comum é global e estoura
   o ruído em áreas lisas. O CLAHE age por blocos e limita o ganho.
-- **Onde entra o Deep Learning nesta parte?** No YuNet, que localiza os rostos para
-  protegê-los. Colorização e super-resolução são a parte de IA do projeto.
+- **Onde entra o Deep Learning nesta parte?** Em três redes: o YuNet localiza os rostos;
+  a U-Net da Microsoft (*Bringing Old Photos Back to Life*, CVPR 2020) marca os riscos; o
+  LaMa (WACV 2022) reconstrói áreas grandes. As regras clássicas continuam: são rápidas,
+  explicáveis e pegam manchas e vincos que a rede não foi treinada para achar.
+- **Por que não usar só a IA?** As duas se complementam. Na `foto_risco3`, a rede achou
+  57 riscos que as regras perdiam; as regras acharam as manchas de poeira e protegem os
+  rostos. E a IA pura não explica por que marcou algo; as regras sim (`--explicar`).
+- **Vocês treinaram a rede?** Não: usamos os pesos oficiais (licença MIT) e os convertemos
+  de PyTorch para ONNX (`scripts/exportar_detector_riscos.py`), conferindo que a saída é a
+  mesma (diferença máxima de 5×10⁻⁷).
+
+## 9. IA na GPU ou na CPU
+
+As redes pesadas rodam no ONNX Runtime ([`runtime.py`](../retrato_vivo/runtime.py)):
+GPU NVIDIA pelo CUDA quando houver, CPU nos outros PCs, com o mesmo resultado (testado em
+`tests/test_ia.py`). A interface mostra onde a IA está rodando na barra de status.
+
+| Restauração completa (detector + LaMa + rosto + DDColor) | Tempo por foto |
+|---|---|
+| RTX 4080 SUPER (CUDA) | cerca de 0,4 s |
+| Só CPU | cerca de 4 s (8 s na primeira foto, que carrega os modelos) |
+
+Para usar a GPU: `pip install "onnxruntime-gpu[cuda,cudnn]"`. Para simular um PC sem placa:
+`set RETRATO_VIVO_CPU=1` (Windows) antes de rodar.
+
+| Modelo | Arquivo | Tamanho | Uso |
+|---|---|---|---|
+| Detector de riscos (Microsoft, MIT) | `scratch_detector.onnx` | 151 MB | `damage_ai.py` |
+| LaMa (Apache-2.0) | `lama_fp32.onnx` | 208 MB | `inpaint.py` |
+| GFPGAN v1.4 (Apache-2.0) | `gfpgan_1.4.onnx` | 340 MB | `ai/face_restore.py` |
+| DDColor (Apache-2.0) | `ddcolor.onnx` | 980 MB | `ai/ddcolor.py` |
+
+Todos ficam em `models/` (fora do git). Baixe com `python -m retrato_vivo modelos`. O
+detector de riscos é convertido por nós; enquanto não for publicado num Release do
+repositório, gere com o script ou copie o arquivo de quem já tem.
 - **Como sabem que funciona?** Pelo teste de envelhecer e restaurar (seção 6) e pelo
   teste de "não estragar foto boa".

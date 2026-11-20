@@ -1085,6 +1085,8 @@ def colorize_model(monkeypatch):
 
     monkeypatch.setattr(controls_module, "colorize_available", lambda: True)
     monkeypatch.setattr(controls_module, "make_colorize_stage", fake_make_colorize_stage)
+    # Sem o DDColor o painel usa o modelo de Zhang, que é o que estes testes simulam.
+    monkeypatch.setattr(controls_module.ddcolor, "is_available", lambda: False)
     return requested_strengths
 
 
@@ -1137,6 +1139,7 @@ def test_no_checkbox_text_loses_a_character_to_a_qt_shortcut(app, colorize_model
 
 def test_colorize_cannot_be_checked_without_the_model(app, monkeypatch):
     monkeypatch.setattr(controls_module, "colorize_available", lambda: False)
+    monkeypatch.setattr(controls_module.ddcolor, "is_available", lambda: False)
 
     panel = ControlsPanel()
 
@@ -1245,8 +1248,12 @@ def test_status_bar_shows_the_summary_after_restoring(window, photo_file):
 
 
 def status_bar_notes(window: MainWindow) -> list[str]:
-    """Os textos fixos da barra de status (os que não somem quando a mensagem muda)."""
-    return [label.text() for label in window.statusBar().findChildren(QLabel)]
+    """Os avisos fixos da barra de status (os que não somem quando a mensagem muda).
+
+    O indicador de onde a IA roda ("IA: GPU (CUDA)" / "IA: CPU") é informação, não aviso.
+    """
+    return [label.text() for label in window.statusBar().findChildren(QLabel)
+            if label is not window.device_label]
 
 
 def test_changing_a_control_restores_again_by_itself(restored_window):
@@ -1354,7 +1361,7 @@ def test_colorize_control_really_colors_a_gray_photo(window, tmp_path):
     wait_until(lambda: window.result is not None, timeout_s=60)
 
     blue, green, red = (window.result.image[..., channel].astype(int) for channel in range(3))
-    assert "colorida pela rede" in window.result.notes["colorizacao"]
+    assert "colorida pel" in window.result.notes["colorizacao"]     # "pela rede" (Zhang) ou "pelo DDColor"
     assert np.abs(red - blue).max() > 0        # numa foto cinza os três canais seriam iguais
 
 

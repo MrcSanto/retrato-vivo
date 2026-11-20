@@ -33,6 +33,7 @@ import numpy as np
 
 from . import damage as dmg
 from . import preprocess as pre
+from . import inpaint as inpaint_module
 from .inpaint import inpaint
 from .io_utils import resize_max_side
 from .visualize import damage_map
@@ -42,13 +43,16 @@ STEP_INFO: dict[str, tuple[str, str]] = {
     "original": ("Original", "A foto como foi aberta."),
     "cor_neutralizada": ("Cor neutralizada", "Remove o amarelado ou o tom sépia."),
     "niveis_automaticos": ("Contraste recuperado", "Devolve o preto e o branco a uma foto desbotada."),
-    "mapa_de_danos": ("Mapa de danos", "Vermelho: riscos. Laranja: vincos. Amarelo: manchas. Verde: rostos protegidos."),
-    "danos_reparados": ("Danos reparados", "Riscos e manchas preenchidos a partir da vizinhança."),
+    "mapa_de_danos": ("Mapa de danos", "Azul: riscos achados pela IA. Vermelho: riscos. Laranja: vincos. "
+                                       "Amarelo: manchas. Verde: rostos protegidos."),
+    "danos_reparados": ("Danos reparados", "Riscos finos preenchidos a partir da vizinhança; "
+                                           "rasgos e áreas grandes, pela IA (LaMa)."),
     "ruido_removido": ("Ruído removido", "Reduz a granulação preservando as bordas."),
     "clahe": ("Contraste local", "Recupera detalhes em áreas muito escuras ou muito claras."),
     "nitidez": ("Nitidez", "Realça os contornos."),
     # etapas de IA (retrato_vivo/ai)
     "colorizacao": ("Colorização", "Uma rede neural prevê as cores de uma foto preto e branco."),
+    "rostos_ia": ("Rostos restaurados", "Uma rede neural (GFPGAN) reconstrói olhos, boca e pele dos rostos."),
 }
 
 Inpainter = Callable[[np.ndarray, np.ndarray], np.ndarray]
@@ -60,7 +64,7 @@ class RestorationConfig:
     preprocess: pre.PreprocessConfig = field(default_factory=pre.PreprocessConfig)
     damage: dmg.DamageConfig = field(default_factory=dmg.DamageConfig)
     repair_damage: bool = True
-    inpaint_method: str = "telea"          # "telea" ou "ns" (ver inpaint.py)
+    inpaint_method: str = "ia"             # "ia" (LaMa nos buracos largos), "telea" ou "ns" (ver inpaint.py)
     inpaint_radius: float = 3.0
 
 
@@ -127,14 +131,18 @@ def restore(image: np.ndarray,
             result.damage = dmg.detect_damage(work, cfg.damage, mask_add, mask_remove)
         stats = result.damage.stats
         log.add("mapa_de_danos", damage_map(work, result.damage),
-                f"{stats['riscos']:.0f} riscos, {stats['vincos']:.0f} vincos, {stats['manchas']:.0f} manchas, "
-                f"{stats['area_danificada_pct']:.2f}% da área")
+                f"{stats['riscos']:.0f} riscos, {stats['vincos']:.0f} vincos, {stats['manchas']:.0f} manchas"
+                + (f", {stats['riscos_ia']:.0f} riscos pela IA" if result.damage.ai_scratches is not None else
+                   " (detector de riscos com IA não baixado)")
+                + f", {stats['area_danificada_pct']:.2f}% da área")
         with _Timer(timings, "inpainting"):
             if inpainter is not None:
                 work = inpainter(work, result.damage.mask)
             else:
                 work = inpaint(work, result.damage.mask, cfg.inpaint_method, cfg.inpaint_radius)
-        log.add("danos_reparados", work)
+        method_note = {"telea": "Telea (clássico)", "ns": "Navier-Stokes (clássico)"}.get(
+            cfg.inpaint_method, inpaint_module.last_note)
+        log.add("danos_reparados", work, "personalizado" if inpainter is not None else method_note)
 
     with _Timer(timings, "realce"):
         work = pre.enhance(work, cfg.preprocess, log)

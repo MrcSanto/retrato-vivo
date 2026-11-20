@@ -11,12 +11,14 @@ from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent, QKeySequence
 from PySide6.QtWidgets import (QDockWidget, QFileDialog, QLabel, QMainWindow, QMessageBox,
                                QProgressBar, QScrollArea, QTabWidget)
 
-from .. import models
+from .. import models, runtime
 from ..io_utils import SUPPORTED_EXTENSIONS, load_image, save_image
 from ..pipeline import RestorationResult
 from ..visualize import side_by_side
 from .compare_view import CompareView
 from .controls import ControlsPanel
+from .extras import LivingPortraitView, TimeMachineView
+from .folder_nav import PhotoFolder, PhotoPicker
 from .mask_editor import MaskEditor
 from .steps_view import StepsView
 from .worker import RestoreWorker
@@ -85,6 +87,21 @@ class MainWindow(QMainWindow):
         self.export_action = self.toolbar.addAction("Exportar comparativo", self.export_comparison)
         self._enable_saving(False)                      # só há o que salvar depois de uma restauração
 
+        # Navegação pelas fotos da pasta da foto aberta (folder_nav.py).
+        self.photo_folder = PhotoFolder(self)
+        self.toolbar.addSeparator()
+        self.previous_action = self.toolbar.addAction("◀", lambda: self.open_neighbor(-1))
+        self.previous_action.setShortcut(QKeySequence.StandardKey.MoveToPreviousPage)    # PgUp
+        self.previous_action.setToolTip("Foto anterior da pasta (PgUp)")
+        self.photo_picker = PhotoPicker(self.photo_folder)
+        self.photo_picker.activated.connect(self._open_picked)
+        self.toolbar.addWidget(self.photo_picker)
+        self.next_action = self.toolbar.addAction("▶", lambda: self.open_neighbor(+1))
+        self.next_action.setShortcut(QKeySequence.StandardKey.MoveToNextPage)            # PgDn
+        self.next_action.setToolTip("Próxima foto da pasta (PgDn)")
+        self.photo_folder.changed.connect(self._update_folder_navigation)
+        self._update_folder_navigation()
+
         self.compare_view = CompareView()
         self.compare_view.placeholder = "Arraste uma foto para cá ou clique em Abrir"
         self.tabs = QTabWidget()
@@ -94,6 +111,11 @@ class MainWindow(QMainWindow):
         self.mask_editor = MaskEditor()
         self.tabs.addTab(self.mask_editor, "Máscara")
         self.mask_editor.apply_button.clicked.connect(self.restore_photo)
+        # Diferencial do projeto (extras.py).
+        self.living_view = LivingPortraitView()
+        self.tabs.addTab(self.living_view, "Retrato Vivo")
+        self.time_machine = TimeMachineView()
+        self.tabs.addTab(self.time_machine, "Máquina do tempo")
         self.setCentralWidget(self.tabs)
 
         self.controls = ControlsPanel()
@@ -119,6 +141,10 @@ class MainWindow(QMainWindow):
             self.statusBar().addPermanentWidget(
                 QLabel("Detector de rostos não baixado. Rode: python -m retrato_vivo modelos"))
         self.statusBar().addPermanentWidget(self.progress)
+        # Onde as redes pesadas rodam: na apresentação mostra se a GPU está sendo usada.
+        self.device_label = QLabel(f"IA: {runtime.device_name()}" if runtime.is_available() else "IA: indisponível")
+        self.device_label.setToolTip("GPU (CUDA) quando há placa NVIDIA; senão CPU (funciona igual, mais devagar).")
+        self.statusBar().addPermanentWidget(self.device_label)
         self.statusBar().showMessage("Abra uma foto ou arraste o arquivo para a janela.")
 
     # ------------------------------------------------------------ abrir a foto
@@ -141,9 +167,30 @@ class MainWindow(QMainWindow):
         self.compare_view.set_photo(image)
         self.steps_view.clear()
         self.mask_editor.clear()             # a pintura era da foto anterior
+        self.living_view.set_source(None)    # o Retrato Vivo usa a foto restaurada, que ainda não existe
+        self.time_machine.set_source(image)
         self._enable_saving(False)           # o resultado antigo era de outra foto
         self.restore_action.setEnabled(True)
+        self.photo_folder.follow(path)
         self.restore_photo()
+
+    def open_neighbor(self, step: int) -> None:
+        """Abre a foto ``step`` posições adiante na pasta (negativo = para trás)."""
+        photo = self.photo_folder.neighbor(self.photo_path, step)
+        if photo is not None and not self.busy:
+            self.open_photo(photo)
+
+    def _open_picked(self, index: int) -> None:
+        photo = Path(self.photo_picker.itemData(index))
+        if photo != (self.photo_path.resolve() if self.photo_path else None):
+            self.open_photo(photo)
+
+    def _update_folder_navigation(self) -> None:
+        self.photo_picker.show_photos(self.photo_path)
+        can_move = len(self.photo_folder.photos) > 1 or (
+            bool(self.photo_folder.photos) and self.photo_folder.index_of(self.photo_path) < 0)
+        self.previous_action.setEnabled(can_move)
+        self.next_action.setEnabled(can_move)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         """O Qt só entrega o ``dropEvent`` se o arrasto for aceito aqui."""
@@ -213,6 +260,7 @@ class MainWindow(QMainWindow):
         self.compare_view.set_comparison(result.original, result.image)
         self.steps_view.set_result(result)
         self.mask_editor.set_result(result)
+        self.living_view.set_source(result.image)
         self._enable_saving(True)
         self._set_busy(False)
         self.statusBar().showMessage(f"{self._photo_label()} · {restoration_summary(result)}")
@@ -242,6 +290,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         self.rerun_timer.stop()      # nada de começar outra restauração com a janela fechando
         self._wait_for_worker()
+        self.living_view.shutdown()
         super().closeEvent(event)
 
     def _photo_label(self) -> str:
