@@ -35,6 +35,9 @@ Precisa de Python 3.10 ou mais novo e de uns 3 GB livres (bibliotecas + modelos)
 git clone https://github.com/MrcSanto/retrato-vivo
 cd retrato-vivo
 ```
+No Windows, clone numa pasta de caminho curto (por exemplo `C:\Users\voce\Desktop`). Em
+pastas muito fundas o `pip` falha com "No such file or directory" ao instalar o PySide6, por
+causa do limite de 260 caracteres de caminho do Windows.
 
 **2. Criar um ambiente virtual e instalar as dependências**
 ```bash
