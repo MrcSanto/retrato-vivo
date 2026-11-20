@@ -53,6 +53,13 @@ def test_cpu_can_be_forced(force_cpu):
 
 
 @needs_lama
+def test_device_name_tells_where_the_networks_really_run():
+    """Sem as bibliotecas do CUDA o ONNX Runtime cai para a CPU em silêncio; a interface
+    não pode dizer "GPU" nesse caso."""
+    assert runtime.device_name() == runtime.session_device(runtime.session(models.model_path("lama")))
+
+
+@needs_lama
 def test_lama_gives_same_result_on_cpu_and_gpu(force_cpu):
     """Qualquer PC: a CPU dá o mesmo resultado da GPU (só demora mais)."""
     _, holed, mask = hole_scene()
