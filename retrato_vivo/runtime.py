@@ -12,6 +12,7 @@ Para simular um PC sem placa de vídeo::
 
 from __future__ import annotations
 
+import importlib.util
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -32,18 +33,41 @@ def is_available() -> bool:
 
 @lru_cache(maxsize=1)
 def _gpu_usable() -> bool:
+    """A GPU funciona DE FATO? Não basta o CUDA aparecer na lista do ONNX Runtime:
+    sem as bibliotecas do CUDA (pacote ``onnxruntime-gpu[cuda,cudnn]``) ele cai para a
+    CPU em silêncio. Por isso abre uma sessão de teste e vê onde ela ficou."""
     if ort is None or os.environ.get("RETRATO_VIVO_CPU"):
         return False
     if _GPU not in ort.get_available_providers():
         return False
-    # Com o pacote onnxruntime-gpu[cuda,cudnn] as DLLs do CUDA vêm pelo pip;
-    # isto as carrega antes da primeira sessão. Sem placa NVIDIA, falha em silêncio.
-    if hasattr(ort, "preload_dlls"):
+    # Com o pacote onnxruntime-gpu[cuda,cudnn] as DLLs do CUDA vêm pelo pip; isto as
+    # carrega antes da primeira sessão. Só tenta se esse pacote estiver instalado, para
+    # não encher o terminal de erros num PC sem placa NVIDIA.
+    if hasattr(ort, "preload_dlls") and importlib.util.find_spec("nvidia") is not None:
         try:
             ort.preload_dlls()
         except Exception:
-            return False
-    return True
+            pass
+    probe = _probe_model()
+    if probe is None:            # nenhum modelo baixado: nada vai rodar mesmo
+        return False
+    options = ort.SessionOptions()
+    options.log_severity_level = 4
+    ort.set_default_logger_severity(4)      # silencioso: sem CUDA a falha aqui é esperada
+    try:
+        sess = ort.InferenceSession(str(probe), options, providers=[_GPU, _CPU])
+    except Exception:
+        return False
+    finally:
+        ort.set_default_logger_severity(3)  # depois, só erros de verdade
+    return _GPU in sess.get_providers()
+
+
+def _probe_model() -> Path | None:
+    """O menor modelo ONNX baixado (o YuNet tem 0,2 MB), para a sessão de teste."""
+    from .models import MODELS_DIR
+    candidates = sorted(MODELS_DIR.glob("*.onnx"), key=lambda p: p.stat().st_size)
+    return candidates[0] if candidates else None
 
 
 def device_name() -> str:

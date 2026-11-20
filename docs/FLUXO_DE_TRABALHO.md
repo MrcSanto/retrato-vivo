@@ -190,7 +190,7 @@ Resumo do que existe:
   [DIAGNOSTICO_RESTAURACAO.md](DIAGNOSTICO_RESTAURACAO.md#0-o-que-já-foi-aplicado-2011-pelo-igor-na-rtx-4080).
 
 **Pendências do Igor:**
-- [ ] Publicar `scratch_detector.onnx` num Release do repositório e pôr a URL em `models.py`.
+- [ ] Anexar `scratch_detector.onnx` ao Release `modelos-v1` pelo site do GitHub (a URL já está em `models.py`).
 - [ ] Rodar os testes com OpenCV 4.x, a versão fixada agora no `requirements.txt`.
   A parte do Igor foi desenvolvida e testada no OpenCV 5.
 - [ ] Vinco que cruza cabelo ou outra textura ainda fica com um trecho sem reparo.

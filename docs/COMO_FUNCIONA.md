@@ -211,6 +211,8 @@ Testes automáticos: `python -m pytest` (38 testes da restauração, um bloco po
 - **Vocês treinaram a rede?** Não: usamos os pesos oficiais (licença MIT) e os convertemos
   de PyTorch para ONNX (`scripts/exportar_detector_riscos.py`), conferindo que a saída é a
   mesma (diferença máxima de 5×10⁻⁷).
+- **Como sabem que funciona?** Pelo teste de envelhecer e restaurar (seção 6) e pelo
+  teste de "não estragar foto boa".
 
 ## 9. IA na GPU ou na CPU
 
@@ -232,9 +234,10 @@ Para usar a GPU: `pip install "onnxruntime-gpu[cuda,cudnn]"`. Para simular um PC
 | LaMa (Apache-2.0) | `lama_fp32.onnx` | 208 MB | `inpaint.py` |
 | GFPGAN v1.4 (Apache-2.0) | `gfpgan_1.4.onnx` | 340 MB | `ai/face_restore.py` |
 | DDColor (Apache-2.0) | `ddcolor.onnx` | 980 MB | `ai/ddcolor.py` |
+| Depth Anything V2 Small (Apache-2.0) | `depth_anything_v2_small.onnx` | 99 MB | `living_portrait.py` |
 
-Todos ficam em `models/` (fora do git). Baixe com `python -m retrato_vivo modelos`. O
-detector de riscos é convertido por nós; enquanto não for publicado num Release do
-repositório, gere com o script ou copie o arquivo de quem já tem.
-- **Como sabem que funciona?** Pelo teste de envelhecer e restaurar (seção 6) e pelo
-  teste de "não estragar foto boa".
+Todos ficam em `models/` (fora do git) e são baixados com `python -m retrato_vivo modelos`.
+O detector de riscos foi convertido por nós e fica no Release
+[`modelos-v1`](https://github.com/MrcSanto/retrato-vivo/releases/tag/modelos-v1) do repositório
+(anexo de download, fora do histórico do git). Para gerá-lo de novo:
+`python scripts/exportar_detector_riscos.py` (precisa do PyTorch).
