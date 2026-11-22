@@ -17,6 +17,7 @@ from ..pipeline import RestorationResult
 from ..visualize import side_by_side
 from .compare_view import CompareView
 from .controls import ControlsPanel
+from .edges_view import EdgesView
 from .extras import LivingPortraitView, TimeMachineView
 from .folder_nav import PhotoFolder, PhotoPicker
 from .mask_editor import MaskEditor
@@ -111,6 +112,8 @@ class MainWindow(QMainWindow):
         self.mask_editor = MaskEditor()
         self.tabs.addTab(self.mask_editor, "Máscara")
         self.mask_editor.apply_button.clicked.connect(self.restore_photo)
+        self.edges_view = EdgesView()
+        self.tabs.addTab(self.edges_view, "Bordas")
         # Diferencial do projeto (extras.py).
         self.living_view = LivingPortraitView()
         self.tabs.addTab(self.living_view, "Retrato Vivo")
@@ -167,6 +170,7 @@ class MainWindow(QMainWindow):
         self.compare_view.set_photo(image)
         self.steps_view.clear()
         self.mask_editor.clear()             # a pintura era da foto anterior
+        self.edges_view.set_result(None)
         self.living_view.set_source(None)    # o Retrato Vivo usa a foto restaurada, que ainda não existe
         self.time_machine.set_source(image)
         self._enable_saving(False)           # o resultado antigo era de outra foto
@@ -260,6 +264,7 @@ class MainWindow(QMainWindow):
         self.compare_view.set_comparison(result.original, result.image)
         self.steps_view.set_result(result)
         self.mask_editor.set_result(result)
+        self.edges_view.set_result(result)
         self.living_view.set_source(result.image)
         self._enable_saving(True)
         self._set_busy(False)
@@ -291,6 +296,7 @@ class MainWindow(QMainWindow):
         self.rerun_timer.stop()      # nada de começar outra restauração com a janela fechando
         self._wait_for_worker()
         self.living_view.shutdown()
+        self.edges_view.shutdown()
         super().closeEvent(event)
 
     def _photo_label(self) -> str:
