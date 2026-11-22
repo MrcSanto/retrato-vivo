@@ -92,6 +92,18 @@ MODELS: dict[str, tuple[str, str, str]] = {
         "https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/EDSR_x4.pb",
         "Super-resolução EDSR (Lim et al., CVPRW 2017), ampliação 4x (38 MB)",
     ),
+    # Bordas por Deep Learning (ai/edges.py), em Caffe: arquitetura + pesos.
+    # O endereço original (vcl.ucsd.edu) saiu do ar; os pesos vêm de uma cópia no GitHub.
+    "hed_rede": (
+        "hed_deploy.prototxt",
+        "https://raw.githubusercontent.com/s9xie/hed/master/examples/hed/deploy.prototxt",
+        "Bordas HED (Xie & Tu, ICCV 2015): arquitetura da rede",
+    ),
+    "hed_pesos": (
+        "hed_pretrained_bsds.caffemodel",
+        "https://github.com/ashukid/hed-edge-detector/raw/master/hed_pretrained_bsds.caffemodel",
+        "Bordas HED (Xie & Tu, ICCV 2015): pesos treinados no BSDS500 (56 MB)",
+    ),
 }
 
 
