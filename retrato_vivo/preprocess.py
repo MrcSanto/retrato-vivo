@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
+from .io_utils import resize_max_side
+
 
 # =============================================================== configuração
 
@@ -60,8 +62,9 @@ class StepLog:
 class Diagnosis:
     """O que foi medido na foto original."""
 
-    monochrome: bool                 # P&B ou sépia (sem variação de cor)
+    monochrome: bool                 # P&B ou sépia (sem cor própria)
     chroma_std: float                # quanto a cor varia entre pixels
+    off_tone_pct: float              # % da cor fora do tom dominante (sépia ~0, colorida > 10)
     cast_ab: tuple[float, float]     # dominante de cor estimada, nos eixos a/b do LAB
     cast_ref_l: float                # luminosidade média dos pixels usados na estimativa
     noise_sigma: float               # ruído estimado, em níveis de cinza
@@ -74,6 +77,10 @@ class Diagnosis:
 
 
 MONOCHROME_MAX_CHROMA_STD = 6.0   # abaixo disso a foto é tratada como P&B/sépia
+SEPIA_MAX_OFF_TONE_PCT = 5.0      # cor variando, mas quase toda num tom só: sépia
+TONE_HALF_WIDTH_DEG = 30          # largura (±) da faixa do "tom dominante"
+TONE_MIN_CHROMA = 3.0             # pixels quase cinza não votam no tom
+_DIAGNOSIS_SIDE = 512             # o diagnóstico de tom roda numa cópia reduzida
 MIN_CAST_TO_CORRECT = 2.0         # dominante menor que isso é ignorada
 MAX_CAST_CORRECTION = 15.0        # teto de segurança da correção
 NOISE_TO_DENOISE = 1.5            # ruído abaixo disso = foto limpa
@@ -112,22 +119,54 @@ def _estimate_cast(lab: np.ndarray) -> tuple[tuple[float, float], float]:
     return cast, float(L[bright_enough][most_neutral].mean())
 
 
+def off_tone_percent(img: np.ndarray) -> float:
+    """Quanto da cor da foto fica FORA do tom dominante, em %.
+
+    Numa foto sépia todo pixel tem o mesmo tom (marrom-amarelado); só muda a
+    quantidade: pouca nas sombras, muita nos claros. É como café com leite:
+    marrom escuro e bege são o mesmo tom em intensidades diferentes. Numa
+    foto colorida há tons diferentes (céu azul, pele, folhas).
+
+    Cada pixel vota no seu tom (ângulo no plano a/b do LAB) com peso igual à
+    sua saturação. Acha-se a faixa de ±30° com mais votos; o que sobra fora
+    dela é o resultado. Usar ângulo, e não uma reta cor x brilho, tolera o
+    sépia "girar" de tom nos claros quando o canal vermelho satura.
+    """
+    small, _ = resize_max_side(img, _DIAGNOSIS_SIDE)
+    lab = cv2.cvtColor(small, cv2.COLOR_BGR2LAB).astype(np.float32)
+    a, b = lab[:, :, 1].ravel() - 128.0, lab[:, :, 2].ravel() - 128.0
+    chroma = np.hypot(a, b)
+    colored = chroma >= TONE_MIN_CHROMA
+    if colored.mean() < 0.01:            # praticamente cinza: um tom só
+        return 0.0
+    angle = np.degrees(np.arctan2(b[colored], a[colored])).astype(int) % 360
+    votes = np.bincount(angle, weights=chroma[colored], minlength=360)
+    w = TONE_HALF_WIDTH_DEG
+    circular = np.r_[votes, votes[:2 * w]]           # 359° é vizinho de 0°
+    best_band = np.convolve(circular, np.ones(2 * w + 1), "valid")[:360].max()
+    return float(100.0 * (1.0 - best_band / votes.sum()))
+
+
 def diagnose(img: np.ndarray) -> Diagnosis:
     """Mede cor, ruído e contraste da foto. Não altera nada."""
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype(np.float32)
     a, b = lab[:, :, 1] - 128.0, lab[:, :, 2] - 128.0
 
-    # Foto sépia tem a cor DESLOCADA mas quase sem VARIAÇÃO entre pixels;
-    # por isso o critério de "monocromática" é o desvio padrão, não a média.
+    # P&B ou sépia (foto sem cor própria), em dois testes:
+    # 1. A cor quase não varia entre pixels (P&B, sépia suave). O critério é
+    #    o desvio padrão, não a média: o sépia DESLOCA a cor, mas varia pouco.
+    # 2. A cor varia, mas é sempre o mesmo tom (sépia de alto contraste:
+    #    sombras marrom escuro, claros creme).
     chroma_std = float(np.hypot(a.std(), b.std()))
-    monochrome = chroma_std < MONOCHROME_MAX_CHROMA_STD
+    off_tone = off_tone_percent(img)
+    monochrome = chroma_std < MONOCHROME_MAX_CHROMA_STD or off_tone < SEPIA_MAX_OFF_TONE_PCT
     if monochrome:
         cast, ref_l = (float(a.mean()), float(b.mean())), float(lab[:, :, 0].mean())
     else:
         cast, ref_l = _estimate_cast(lab)
 
     black, white = np.percentile(lab[:, :, 0], (LEVELS_CLIP_PCT, 100.0 - LEVELS_CLIP_PCT))
-    return Diagnosis(monochrome=monochrome, chroma_std=chroma_std, cast_ab=cast,
+    return Diagnosis(monochrome=monochrome, chroma_std=chroma_std, off_tone_pct=off_tone, cast_ab=cast,
                      cast_ref_l=ref_l, noise_sigma=estimate_noise(img),
                      black_point=float(black), white_point=float(white))
 
@@ -232,13 +271,15 @@ def denoise(img: np.ndarray, h: float) -> np.ndarray:
 
 
 def denoise_dose(noise_sigma: float, strength: float = 1.0) -> float:
-    """Força do Non-Local Means para o ruído medido (0 = não precisa).
+    """Força do Non-Local Means para o ruído medido (0 = não aplicar).
 
-    Em foto sem ruído o filtro só atrapalha: cria "degraus" em céus e fundos
-    suaves e deixa a pele com aspecto de plástico.
+    ``strength`` é o slider da interface (0 a 2): 1 = automático. Em foto sem
+    ruído o automático não aplica nada, porque o filtro só atrapalharia (cria
+    "degraus" em céus e deixa a pele com aspecto de plástico). Acima de 1, o
+    usuário pede limpeza mesmo assim, em dose leve (até 4 no máximo do slider).
     """
     if noise_sigma < NOISE_TO_DENOISE:
-        return 0.0
+        return float(max(0.0, strength - 1.0) * 4.0)
     return float(np.clip(0.6 * noise_sigma * strength, 1.0, 12.0))
 
 
