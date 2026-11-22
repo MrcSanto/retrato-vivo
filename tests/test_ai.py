@@ -223,3 +223,88 @@ def test_cli_accepts_superres_options():
     args = build_parser().parse_args(["restaurar", "f.jpg", "--ampliar", "--modelo-sr", "edsr",
                                       "--tamanho-alvo", "1500"])
     assert args.ampliar and args.modelo_sr == "edsr" and args.tamanho_alvo == 1500
+
+
+# ============================================================ edges.py
+
+edges = importlib.import_module("retrato_vivo.ai.edges")
+
+needs_hed = pytest.mark.skipif(
+    not edges.is_available(),
+    reason="modelo HED não baixado (python -m retrato_vivo modelos)")
+
+
+def square_scene(h: int = 300, w: int = 400) -> np.ndarray:
+    """Quadrado branco (x 100–300, y 80–220) sobre fundo preto."""
+    img = np.zeros((h, w, 3), np.uint8)
+    cv2.rectangle(img, (100, 80), (300, 220), (255, 255, 255), -1)
+    return img
+
+
+def test_canny_finds_the_square_outline():
+    out = edges.bordas_canny(square_scene())
+    assert out.shape == (300, 400) and out.dtype == np.uint8
+    assert set(np.unique(out)) <= {0, 255}
+    assert out[78:83, 150:250].any()            # borda de cima
+    assert not out[120:180, 150:250].any()      # dentro do quadrado: liso, sem borda
+
+
+def test_crop_layer_cuts_from_the_center():
+    layer = edges._CropLayer(None, None)
+    assert layer.getMemoryShapes([[1, 1, 10, 12], [1, 3, 6, 8]]) == [[1, 1, 6, 8]]
+    blob = np.arange(120, dtype=np.float32).reshape(1, 1, 10, 12)
+    out = layer.forward([blob, None])[0]
+    assert out.shape == (1, 1, 6, 8)
+    assert out[0, 0, 0, 0] == blob[0, 0, 2, 2]  # margem de (10-6)/2 = 2 e (12-8)/2 = 2
+
+
+def test_panel_without_hed_still_comes_out(monkeypatch):
+    monkeypatch.setattr(edges, "is_available", lambda: False)
+    antes, depois = square_scene(300, 400), square_scene(600, 800)   # depois ampliada 2x
+    panel = edges.painel_bordas(antes, depois, gap=8)
+    cell_h = 300 + edges.LABEL_HEIGHT
+    assert panel.shape == (2 * cell_h + 8, 400 + 8 + 400, 3)
+
+
+@needs_hed
+def test_hed_marks_the_square_outline_in_the_right_place():
+    out = edges.bordas_hed(square_scene())
+    assert out.shape == (300, 400) and out.dtype == np.uint8
+    ys, xs = np.where(out > 128)
+    # com o Crop do OpenCV 4.14 as bordas sairiam ~35 px deslocadas
+    assert abs(xs.min() - 100) <= 5 and abs(xs.max() - 300) <= 5
+    assert abs(ys.min() - 80) <= 5 and abs(ys.max() - 220) <= 5
+    assert out[120:180, 150:250].max() < 30     # dentro do quadrado: liso
+
+
+@needs_hed
+def test_hed_handles_big_and_gray_photos():
+    big = cv2.resize(square_scene(), (1200, 900), interpolation=cv2.INTER_NEAREST)
+    assert edges.bordas_hed(big).shape == (900, 1200)
+    assert edges.bordas_hed(gray_scene()).shape == gray_scene().shape[:2]
+
+
+def test_hed_does_not_leave_the_crop_layer_registered(monkeypatch):
+    """Outras redes Caffe (colorização) não podem ganhar a nossa Crop por tabela."""
+    calls = []
+
+    class FakeNet:
+        def setInput(self, blob):
+            calls.append("entrada")
+
+        def forward(self):
+            calls.append("executa")
+            return np.zeros((1, 1, 30, 40), np.float32)
+
+    monkeypatch.setattr(cv2, "dnn_registerLayer", lambda *a: calls.append("registra"))
+    monkeypatch.setattr(cv2, "dnn_unregisterLayer", lambda *a: calls.append("remove"))
+    monkeypatch.setattr(cv2.dnn, "readNetFromCaffe", lambda *a: FakeNet())
+    monkeypatch.setattr(edges, "is_available", lambda: True)
+    monkeypatch.setattr(edges, "_NET", None)
+    edges.bordas_hed(np.zeros((30, 40, 3), np.uint8))
+    # a Crop fica ligada no carregamento e na execução, e desligada no fim de cada um
+    assert calls == ["registra", "remove", "entrada", "registra", "executa", "remove"]
+
+
+def test_cli_accepts_edges_option():
+    assert build_parser().parse_args(["restaurar", "f.jpg", "--bordas"]).bordas

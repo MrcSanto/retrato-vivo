@@ -6,6 +6,7 @@ Exemplos::
     python -m retrato_vivo restaurar pasta_de_fotos -o saida --sensibilidade 0.7
     python -m retrato_vivo restaurar foto_pb.jpg -o saida --colorir --intensidade-cor 0.7
     python -m retrato_vivo restaurar foto_pequena.jpg -o saida --ampliar --modelo-sr edsr
+    python -m retrato_vivo restaurar foto.jpg -o saida --bordas   # Canny x HED, antes e depois
     python -m retrato_vivo avaliar foto_boa.jpg -o avaliacao
     python -m retrato_vivo envelhecer foto_boa.jpg -o antiga.png
     python -m retrato_vivo vivo foto.jpg -o saida                 # Retrato Vivo (vídeo 3D)
@@ -86,6 +87,11 @@ def cmd_restaurar(args: argparse.Namespace) -> int:
     out_dir = Path(args.saida)
     src_path = Path(args.entrada)
     sources = list_images(src_path) if src_path.is_dir() else [src_path]
+    if args.bordas:
+        from .ai import edges
+        if not edges.is_available():
+            print("aviso: modelo HED não baixado (o painel de bordas sai só com o Canny); "
+                  "rode  python -m retrato_vivo modelos")
     failures = 0
     for src in sources:
         try:
@@ -99,6 +105,8 @@ def cmd_restaurar(args: argparse.Namespace) -> int:
         save_image(out_dir / f"{src.stem}_antes_depois.jpg", side_by_side(res.original, res.image))
         if args.painel:
             save_image(out_dir / f"{src.stem}_painel.jpg", steps_panel(res.steps))
+        if args.bordas:
+            save_image(out_dir / f"{src.stem}_bordas.jpg", edges.painel_bordas(res.original, res.image))
         if args.etapas:
             for i, (name, step) in enumerate(res.steps.items()):
                 save_image(out_dir / f"{src.stem}_etapas" / f"{i:02d}_{name}.png", step)
@@ -223,6 +231,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("-o", "--saida", default="saida")
     r.add_argument("--painel", action="store_true", help="salva um painel com todas as etapas")
     r.add_argument("--etapas", action="store_true", help="salva cada etapa em um arquivo")
+    r.add_argument("--bordas", action="store_true",
+                   help="salva um painel de bordas Canny x HED (Deep Learning), antes e depois")
     r.add_argument("--explicar", action="store_true",
                    help="mostra o diagnóstico e o que cada etapa decidiu")
     r.add_argument("--colorir", action="store_true",
