@@ -237,9 +237,9 @@ Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
    - O OpenCV 4.14 tem um bug ao importar a camada `DepthToSpace` do TensorFlow; `ai/tf_fix.py`
      corrige o `.pb` em memória ao carregar (o arquivo em disco não muda).
    - Linha de comando: `restaurar foto.jpg --ampliar [--modelo-sr edsr] [--tamanho-alvo 2048]`.
-   - **GUI (Marcos Paulo):** depois desta etapa `res.image` fica maior que `res.original`; o slider
-     antes/depois precisa redimensionar as duas para o mesmo tamanho (como `visualize.side_by_side` faz).
-     Rodar EDSR sempre na `QThread`, com aviso de que demora.
+   - ✅ **GUI (Marco, 22/11):** caixa "Ampliar foto pequena" no painel e escolha ESPCN/EDSR em
+     "Ajustes avançados" (`gui/controls.py`). O slider antes/depois já desenhava as duas fotos no
+     mesmo retângulo, então a imagem final maior não quebra a comparação.
    - Na lista de `post_stages`, colocar **depois** da colorização (colorir a foto menor é mais rápido).
 4. ✅ **Restauração de rosto (prioridade 3, opcional).** Feita pelo Igor (20/11) em
    `ai/face_restore.py`: GFPGAN v1.4 em ONNX Runtime, opção `--rostos`. Junto veio o DDColor
@@ -263,8 +263,8 @@ Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
      ignora a textura e mostra os contornos reais (rostos, roupas) **mais fortes** depois.
      Bom argumento de "PI clássico × DL" para a apresentação.
    - Linha de comando: `restaurar foto.jpg --bordas` salva `foto_bordas.jpg`.
-   - **GUI (Marcos Paulo):** aba "Bordas" mostrando `ai.edges.painel_bordas(res.original, res.image)`
-     (rodar na `QThread`). Ainda falta também a opção "Ampliar" da super-resolução (item 3).
+   - ✅ **GUI (Marco, 22/11):** aba "Bordas" (`gui/edges_view.py`), calculada em segundo plano e só
+     quando a aba aparece; botão "Salvar painel". Testes em `tests/test_gui_ia.py`.
 
 ---
 
@@ -308,6 +308,7 @@ rodam sem tela.
 7. ✅ Salvar resultado, mais "exportar comparativo" (`visualize.side_by_side`).
 8. ✅ Barra de status com `res.damage.stats` e `res.timings_ms`.
 9. Abas dos extras (ver seção 7).
+10. ✅ Opção "Ampliar" e aba "Bordas" (feitas pelo Marco em 22/11, ver 6.2 itens 3 e 9).
 
 **Também é responsabilidade do Marcos Paulo:** README final (prints e link do vídeo) e
 gravação do vídeo demo de 30 a 60 s.
