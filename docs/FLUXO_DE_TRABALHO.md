@@ -203,7 +203,7 @@ Resumo do que existe:
 
 ### 6.2 Marco Antonio Santolin: Deep Learning
 
-**Status: 🔄 colorização (16/11) e super-resolução (17/11) prontas e testadas; HED a seguir.**
+**Status: ✅ colorização (16/11), super-resolução (17/11) e bordas Canny vs. HED (22/11) prontas e testadas.**
 Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
 "Deep Learning" do enunciado, então é a parte mais visível da nota de complexidade.
 
@@ -241,17 +241,30 @@ Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
      antes/depois precisa redimensionar as duas para o mesmo tamanho (como `visualize.side_by_side` faz).
      Rodar EDSR sempre na `QThread`, com aviso de que demora.
    - Na lista de `post_stages`, colocar **depois** da colorização (colorir a foto menor é mais rápido).
-4. **Restauração de rosto (prioridade 3, opcional).** Recortar os rostos usando
-   `result.damage.faces` (o YuNet já roda no pipeline), aplicar um modelo de rosto em
-   ONNX (ex.: GFPGAN ou CodeFormer) e colar de volta com `cv2.seamlessClone`.
-   Testar antes se o OpenCV carrega o ONNX escolhido.
-5. **Inpainting com DL (opcional).** As fotos rasgadas (pedaços faltando) estão fora do
-   alcance do preenchimento clássico. Um modelo como o LaMa pode ser plugado em
-   `restore(..., inpainter=...)`.
+4. ✅ **Restauração de rosto (prioridade 3, opcional).** Feita pelo Igor (20/11) em
+   `ai/face_restore.py`: GFPGAN v1.4 em ONNX Runtime, opção `--rostos`. Junto veio o DDColor
+   (`ai/ddcolor.py`), que virou a colorização padrão (`--modelo-cor zhang` usa a minha).
+5. ✅ **Inpainting com DL (opcional).** Feito pelo Igor (20/11): LaMa em `inpaint.py`.
 6. **CUDA (opcional).** O `opencv-python` do pip **não tem CUDA**. Só vale a pena se der
    tempo de compilar o OpenCV com CUDA. O enunciado aceita "DL **e/ou** CUDA", então DL basta.
 7. Testes em `tests/test_ai.py`, usando `pytest.mark.skipif` quando o modelo não foi baixado.
-8. **Responsável por compartilhar o repo com `rafaelrieder`.**
+8. ✅ **Responsável por compartilhar o repo com `rafaelrieder`.** Feito.
+9. ✅ **Bordas Canny vs. HED (item da proposta, seção 6.4).** Feito em `ai/edges.py`:
+   `bordas_canny(img)`, `bordas_hed(img)` e `painel_bordas(antes, depois)` (2×2: Canny/HED ×
+   antes/depois). É só visualização: não altera a foto.
+   - Canny com limiares automáticos pela mediana. HED (Xie & Tu, ICCV 2015) em Caffe via
+     `cv2.dnn`, com entrada de até 512 px: ~0,5 s na CPU.
+   - O `Crop` nativo do OpenCV 4.14 recorta do canto e desloca as bordas ~35 px; `edges.py`
+     registra uma `Crop` que recorta pelo centro, ligada só enquanto o HED roda.
+   - O painel reduz as duas fotos à mesma altura **antes** de detectar as bordas (a restaurada
+     pode ter sido ampliada).
+   - O que mostra, nas fotos de `imagens/`: o Canny marca qualquer variação de brilho, e por isso
+     tem **mais** traços depois da restauração (o CLAHE e a nitidez realçam a textura); o HED
+     ignora a textura e mostra os contornos reais (rostos, roupas) **mais fortes** depois.
+     Bom argumento de "PI clássico × DL" para a apresentação.
+   - Linha de comando: `restaurar foto.jpg --bordas` salva `foto_bordas.jpg`.
+   - **GUI (Marcos Paulo):** aba "Bordas" mostrando `ai.edges.painel_bordas(res.original, res.image)`
+     (rodar na `QThread`). Ainda falta também a opção "Ampliar" da super-resolução (item 3).
 
 ---
 
@@ -309,7 +322,7 @@ definiu a super-resolução com outros modelos. **A equipe precisa definir os re
 | Item | O que fazer | Técnicas | Área sugerida | Responsável |
 |---|---|---|---|---|
 | **Correção de perspectiva** ("foto de uma foto") | Quem fotografa uma foto impressa com o celular tem o papel torto, em trapézio, e com fundo em volta. A etapa acha as 4 bordas do papel, "desentorta" e recorta. | Canny/limiarização, `findContours`, `approxPolyDP` (maior quadrilátero), ordenar cantos, `getPerspectiveTransform` + `warpPerspective` | Igor (pré-processamento) ou Marcos Paulo (modo da GUI) | **A definir** |
-| **Comparação de bordas Canny vs. HED** | Mostrar lado a lado as bordas da foto antes e depois da restauração, pelo método clássico (Canny) e por Deep Learning (HED). Mostra o ganho da restauração e a diferença entre PI clássico e DL. | `cv2.Canny`; HED (Xie & Tu, ICCV 2015, Caffe) via `cv2.dnn`, com a camada `Crop` customizada | Marco (Deep Learning) | **A definir** (sugestão: Marco) |
+| **Comparação de bordas Canny vs. HED** | Mostrar lado a lado as bordas da foto antes e depois da restauração, pelo método clássico (Canny) e por Deep Learning (HED). Mostra o ganho da restauração e a diferença entre PI clássico e DL. | `cv2.Canny`; HED (Xie & Tu, ICCV 2015, Caffe) via `cv2.dnn`, com a camada `Crop` customizada | Marco (Deep Learning) | ✅ **Marco (22/11)**, ver 6.2 item 9 |
 | **Super-resolução: modelos** | A proposta citava ESPCN/EDSR via `dnn_superres`, mas esse módulo está no *contrib*, que não instalamos. Usar os mesmos `.pb` via `cv2.dnn`: **ESPCN** como padrão (rápido) e **EDSR** como "qualidade máxima" (lento). | `cv2.dnn.readNetFromTensorflow`, ×2/×4 | Marco | Marco (já na 6.2) |
 
 **Correção de perspectiva, detalhes para quem pegar:**
@@ -395,7 +408,7 @@ colorização guiada por clique; laudo de restauração em HTML/PDF.
 
 ## 9. Checklist de entrega (requisitos do enunciado)
 
-- [ ] **OpenCV + Deep Learning:** YuNet ✅, colorização, super-resolução (ESPCN/EDSR), bordas HED, profundidade (MiDaS)
+- [x] **OpenCV + Deep Learning:** YuNet ✅, colorização ✅, super-resolução (ESPCN/EDSR) ✅, bordas HED ✅, profundidade (Depth Anything V2) ✅
 - [ ] **Tudo o que a proposta enviada ao professor prometeu:** correção de perspectiva, Canny vs. HED,
       slider antes/depois (ver seção 6.4)
 - [x] **GUI** funcional (PySide6)
@@ -403,7 +416,7 @@ colorização guiada por clique; laudo de restauração em HTML/PDF.
 - [x] **Técnicas de PI claras:** morfologia, segmentação, histerese, inpainting, NLM, CLAHE
 - [ ] **Vídeo demo de 30 a 60 s**, com link no README
 - [x] **Flexibilidade de arquivos:** qualquer formato, tamanho, P&B/colorida, 16 bits, alfa, acentos, celular
-- [ ] Repo **compartilhado com `rafaelrieder`**
+- [x] Repo **compartilhado com `rafaelrieder`**
 - [ ] **Commits dos três, equilibrados**
 - [ ] Repo só com código-fonte e dependências (sem pesos nem fotos pessoais)
 - [ ] Ensaio de **até 10 min**, com fotos de teste que nunca foram usadas no desenvolvimento
