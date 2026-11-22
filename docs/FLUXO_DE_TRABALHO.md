@@ -322,11 +322,32 @@ definiu a super-resolução com outros modelos. **A equipe precisa definir os re
 
 | Item | O que fazer | Técnicas | Área sugerida | Responsável |
 |---|---|---|---|---|
-| **Correção de perspectiva** ("foto de uma foto") | Quem fotografa uma foto impressa com o celular tem o papel torto, em trapézio, e com fundo em volta. A etapa acha as 4 bordas do papel, "desentorta" e recorta. | Canny/limiarização, `findContours`, `approxPolyDP` (maior quadrilátero), ordenar cantos, `getPerspectiveTransform` + `warpPerspective` | Igor (pré-processamento) ou Marcos Paulo (modo da GUI) | **A definir** |
+| **Correção de perspectiva** ("foto de uma foto") | Quem fotografa uma foto impressa com o celular tem o papel torto, em trapézio, e com fundo em volta. A etapa acha as 4 bordas do papel, "desentorta" e recorta. | Canny/limiarização, `findContours`, `approxPolyDP` (maior quadrilátero), ordenar cantos, `getPerspectiveTransform` + `warpPerspective` | Igor (pré-processamento) ou Marcos Paulo (modo da GUI) | ✅ **Marco (22/11)**, ver abaixo |
 | **Comparação de bordas Canny vs. HED** | Mostrar lado a lado as bordas da foto antes e depois da restauração, pelo método clássico (Canny) e por Deep Learning (HED). Mostra o ganho da restauração e a diferença entre PI clássico e DL. | `cv2.Canny`; HED (Xie & Tu, ICCV 2015, Caffe) via `cv2.dnn`, com a camada `Crop` customizada | Marco (Deep Learning) | ✅ **Marco (22/11)**, ver 6.2 item 9 |
 | **Super-resolução: modelos** | A proposta citava ESPCN/EDSR via `dnn_superres`, mas esse módulo está no *contrib*, que não instalamos. Usar os mesmos `.pb` via `cv2.dnn`: **ESPCN** como padrão (rápido) e **EDSR** como "qualidade máxima" (lento). | `cv2.dnn.readNetFromTensorflow`, ×2/×4 | Marco | Marco (já na 6.2) |
 
-**Correção de perspectiva, detalhes para quem pegar:**
+**Correção de perspectiva: ✅ feita (Marco, 22/11)** em `retrato_vivo/perspective.py`:
+`encontrar_papel(img)`, `retificar(img, cantos)`, `desenhar_cantos(img, cantos)` e
+`corrigir_perspectiva(img) -> (img, achou)`.
+- Busca o papel numa cópia de 800 px por dois caminhos (bordas de Canny engrossadas e Otsu),
+  simplifica cada contorno com `approxPolyDP` e só aceita um quadrilátero que passe em todos os
+  testes de desconfiança: convexo, 15% a 95% da foto, **nenhum canto encostado na beira** (tem que
+  haver fundo em volta), ângulos de 45° a 135°, lados opostos com no máximo 30° entre si e **cada
+  lado apoiado em bordas reais** em pelo menos metade do comprimento. Fica o maior válido.
+- Pipeline: `RestorationConfig.correct_perspective` (desligada por padrão), logo depois de abrir
+  a foto. A foto desentortada vira `result.original`, então o slider antes/depois e a máscara da
+  GUI continuam com o mesmo tamanho. Etapas `papel_detectado` e `perspectiva` em `result.steps`;
+  sem papel, a nota explica e a foto segue intacta. ~25 ms.
+- Linha de comando `restaurar --perspectiva`; GUI: caixa "Foto tirada do celular".
+- Medido com as 10 fotos de `imagens/` simuladas como foto de celular (perspectiva, luz desigual,
+  desfoque): cantos a menos de 25 px (em 2000 px) em **30/30** sobre mesa escura, madeira e com
+  sombra forte; 29/30 e 27/30 com perspectiva mais forte. As **10 fotos digitalizadas voltam
+  intactas.** Limitação: papel de margem branca sobre mesa clara quase sempre não é achado
+  (3/10); a foto volta intacta. Dica na interface: fotografar sobre um fundo escuro.
+- Não feito: arrastar os cantos na GUI quando a detecção erra.
+- Testes em `tests/test_perspectiva.py`. **Igor:** toca no começo do `pipeline.restore()`.
+
+**Especificação original:**
 - Contrato: `def corrigir_perspectiva(img) -> tuple[np.ndarray, bool]`, que devolve a foto
   corrigida e se achou o papel. Se não achar um quadrilátero confiável (área mínima, ângulos
   razoáveis), devolve a foto intacta: uma foto digitalizada normal não pode ser estragada.
@@ -410,7 +431,7 @@ colorização guiada por clique; laudo de restauração em HTML/PDF.
 ## 9. Checklist de entrega (requisitos do enunciado)
 
 - [x] **OpenCV + Deep Learning:** YuNet ✅, colorização ✅, super-resolução (ESPCN/EDSR) ✅, bordas HED ✅, profundidade (Depth Anything V2) ✅
-- [ ] **Tudo o que a proposta enviada ao professor prometeu:** correção de perspectiva, Canny vs. HED,
+- [x] **Tudo o que a proposta enviada ao professor prometeu:** correção de perspectiva, Canny vs. HED,
       slider antes/depois (ver seção 6.4)
 - [x] **GUI** funcional (PySide6)
 - [ ] **Aplicabilidade prática:** restaurar fotos de família, de forma acessível para leigos
