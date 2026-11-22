@@ -47,5 +47,9 @@ de que a detecção e o preenchimento funcionam: os riscos que a Máquina do tem
 
 1. Abrir a `foto_risco3` → mostrar o antes/depois (riscos somem, rosto melhora, cor).
 2. Aba **Etapas** → explicar o processamento clássico + IA.
-3. Aba **Retrato Vivo** → "Criar" → a foto ganha vida. Mostrar "Ver profundidade".
-4. Pedir uma selfie ao professor → aba **Máquina do tempo** → 1920 → "Restaurar de volta".
+3. Aba **Bordas** → Canny × HED: o clássico marca qualquer textura; a rede marca os contornos, que
+   ficam mais fortes depois da restauração.
+4. Uma foto impressa fotografada com o celular → "Foto tirada do celular" → na aba Etapas, o papel
+   encontrado em verde e a foto desentortada.
+5. Aba **Retrato Vivo** → "Criar" → a foto ganha vida. Mostrar "Ver profundidade".
+6. Pedir uma selfie ao professor → aba **Máquina do tempo** → 1920 → "Restaurar de volta".
