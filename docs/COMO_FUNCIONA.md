@@ -14,6 +14,7 @@ Em uma frase: o sistema **mede** a foto, corrige cor e contraste só se precisar
 | Arquivo | Pergunta que ele responde |
 |---|---|
 | [`io_utils.py`](../retrato_vivo/io_utils.py) | Como abrir e salvar qualquer foto (acentos, celular deitado, PNG transparente, 16 bits)? |
+| [`perspective.py`](../retrato_vivo/perspective.py) | A foto é uma foto de uma foto impressa, tirada com o celular? Onde está o papel? (opcional) |
 | [`preprocess.py`](../retrato_vivo/preprocess.py) | A foto está amarelada, desbotada, granulada? Como corrigir sem estragar? |
 | [`faces.py`](../retrato_vivo/faces.py) | Onde estão os rostos (para protegê-los)? |
 | [`damage.py`](../retrato_vivo/damage.py) | **Onde** estão os riscos, vincos e manchas? (regras) |
@@ -36,6 +37,7 @@ Quando não precisa, a etapa é pulada e o motivo fica registrado.
 | # | Etapa | O que faz | Técnica | Quando age |
 |---|---|---|---|---|
 | 1 | Abrir | Lê o arquivo e reduz para no máximo 2048 px | `imdecode`, rotação EXIF | Sempre |
+| 1b | Perspectiva | Acha o papel na foto do celular, desentorta e recorta | Canny + Otsu, `findContours`, `approxPolyDP`, homografia (`warpPerspective`) | Só se ligada e se achar um papel confiável |
 | 2 | Diagnóstico | Mede cor, ruído e contraste | Estatísticas em LAB, filtro de ruído | Sempre (não altera nada) |
 | 3 | Cor | Foto sépia/P&B vira cinza neutro; foto colorida amarelada perde o amarelo | Espaço LAB | Só se houver dominante de cor |
 | 4 | Contraste | Devolve o preto e o branco a uma foto desbotada | Esticamento de histograma | Só se a foto não usa toda a faixa de tons |
@@ -137,6 +139,7 @@ No mapa de danos: **vermelho** = risco, **laranja** = vinco, **amarelo** = manch
 
 | Controle | Campo | Efeito |
 |---|---|---|
+| Foto tirada do celular | `cfg.correct_perspective` | Desentorta e recorta a foto impressa (padrão: desligado) |
 | Sensibilidade (0 a 1) | `cfg.damage.sensitivity` | Mais alto pega mais dano e mais falso positivo |
 | Riscos com IA | `cfg.damage.use_ai` | Soma o detector de riscos com IA (padrão: ligado) |
 | Ligar/desligar riscos, vincos, manchas | `cfg.damage.detect_*` | |
@@ -188,6 +191,9 @@ Testes automáticos: `python -m pytest` (38 testes da restauração, um bloco po
 - **Foto colorida que desbotou toda para um tom só** (cópias dos anos 70, por exemplo) pode
   ser tratada como sépia e recolorida pela rede. Aconteceu em 2 de 7 simulações; nenhuma
   das fotos coloridas reais do projeto foi afetada.
+- **Perspectiva com papel de margem branca sobre mesa clara** quase nunca é achada (3 de 10
+  simulações): a borda do papel some no fundo. A foto volta intacta. Fotografe sobre um fundo
+  escuro. Sobre mesa escura, madeira ou com sombra forte, acertou 30 de 30.
 - **AVIF** exige `pillow>=11.3`; com Pillow antigo o arquivo é ignorado com aviso.
 
 ## 8. Perguntas que o professor pode fazer
@@ -211,6 +217,11 @@ Testes automáticos: `python -m pytest` (38 testes da restauração, um bloco po
 - **Vocês treinaram a rede?** Não: usamos os pesos oficiais (licença MIT) e os convertemos
   de PyTorch para ONNX (`scripts/exportar_detector_riscos.py`), conferindo que a saída é a
   mesma (diferença máxima de 5×10⁻⁷).
+- **Como acham o papel na foto do celular sem estragar uma foto digitalizada?** Procuram um
+  quadrilátero (Canny e Otsu, depois `approxPolyDP`) e desconfiam dele: precisa ter fundo em volta
+  (nenhum canto na beira da imagem), lados opostos quase paralelos e cada lado apoiado numa borda
+  real da foto. Sem isso, a foto segue intacta: as 10 fotos digitalizadas do projeto passam sem
+  corte. Achado o papel, a homografia (`getPerspectiveTransform`) leva o trapézio a um retângulo.
 - **Como sabem que funciona?** Pelo teste de envelhecer e restaurar (seção 6) e pelo
   teste de "não estragar foto boa".
 

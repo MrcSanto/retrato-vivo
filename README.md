@@ -24,7 +24,10 @@ Restaurador de fotos antigas com OpenCV e Deep Learning. Trabalho final de
   restauração e um editor para corrigir a detecção à mão.
 - **Retrato Vivo** (o diferencial): a foto restaurada vira um vídeo com efeito 3D.
 - **Máquina do tempo**: uma foto atual vira foto de 1900, 1920, 1950, 1970 ou Polaroid.
-- _Em desenvolvimento:_ super-resolução com Deep Learning.
+- **Amplia** fotos pequenas com super-resolução (ESPCN, rápido, ou EDSR, melhor e mais lento).
+- **Desentorta foto de foto**: quem fotografa uma foto impressa com o celular tem o papel torto
+  e com a mesa em volta; o sistema acha o papel, corrige a perspectiva e recorta.
+- **Compara as bordas** antes e depois pelo método clássico (Canny) e por Deep Learning (HED).
 
 ## Como rodar (qualquer PC)
 
@@ -73,6 +76,9 @@ Ela já abre com as fotos de exemplo da pasta `imagens/`.
 ```bash
 python -m retrato_vivo restaurar foto.jpg -o saida --painel --explicar   # restaura e explica cada etapa
 python -m retrato_vivo restaurar foto.jpg -o saida --colorir --rostos     # com cor e rostos
+python -m retrato_vivo restaurar foto.jpg -o saida --ampliar              # super-resolução (--modelo-sr edsr: melhor)
+python -m retrato_vivo restaurar foto_do_celular.jpg -o saida --perspectiva   # desentorta foto de foto
+python -m retrato_vivo restaurar foto.jpg -o saida --bordas               # painel Canny x HED
 python -m retrato_vivo vivo foto.jpg -o saida        # Retrato Vivo: vídeo 3D (MP4 e GIF)
 python -m retrato_vivo viajar selfie.jpg -o saida    # Máquina do tempo: todas as épocas
 python -m retrato_vivo avaliar foto_boa.jpg          # estraga, restaura e mede PSNR/SSIM
@@ -86,15 +92,18 @@ Abra com `python -m retrato_vivo.gui`. Sem argumentos, já abre a primeira foto 
 
 1. **Abrir:** clique em "Abrir" (Ctrl+O) ou arraste a foto para a janela. A restauração começa sozinha.
 2. **Antes e depois:** arraste a linha branca sobre a foto.
-3. **Painel da esquerda:** "Força da limpeza", "Colorir" e "Melhorar rostos". O resto fica em
-   "Ajustes avançados". A restauração é refeita sozinha quando você para de mexer.
+3. **Painel da esquerda:** "Força da limpeza", "Foto tirada do celular" (desentorta o papel),
+   "Colorir", "Melhorar rostos" e "Ampliar foto pequena". O resto (modelo de cor, ESPCN ou EDSR
+   etc.) fica em "Ajustes avançados". A restauração é refeita sozinha quando você para de mexer.
 4. **Etapas:** a foto em cada ponto do processamento e o que cada etapa decidiu.
 5. **Máscara:** pinte com o pincel o que a detecção não pegou (rasgos, por exemplo) e clique em
    "Aplicar correções". A borracha desmarca o que foi marcado por engano.
-6. **Retrato Vivo:** "Criar Retrato Vivo" transforma a foto restaurada num vídeo 3D; salve em MP4 ou GIF.
-7. **Máquina do tempo:** escolha uma época; "Restaurar de volta" mostra a restauração desfazendo o
+6. **Bordas:** Canny (clássico) e HED (rede neural), antes e depois da restauração.
+   O clássico marca qualquer textura; a rede marca só os contornos dos objetos.
+7. **Retrato Vivo:** "Criar Retrato Vivo" transforma a foto restaurada num vídeo 3D; salve em MP4 ou GIF.
+8. **Máquina do tempo:** escolha uma época; "Restaurar de volta" mostra a restauração desfazendo o
    envelhecimento.
-8. **Salvar:** "Salvar resultado" (Ctrl+S) e "Exportar comparativo".
+9. **Salvar:** "Salvar resultado" (Ctrl+S) e "Exportar comparativo".
 
 A barra de status mostra os danos encontrados, o tempo e se a IA está rodando na GPU ou na CPU.
 
