@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QGroupBox, QLa
                                QVBoxLayout, QWidget)
 
 from .. import damage_ai, inpaint
-from ..ai import ddcolor, face_restore
+from ..ai import ddcolor, face_restore, superres
 from ..ai.colorize import DEFAULT_STRENGTH, make_colorize_stage
 from ..ai.colorize import is_available as colorize_available
 from ..pipeline import PostStage, RestorationConfig
@@ -105,6 +105,17 @@ class ControlsPanel(QWidget):
             self.restore_faces.setEnabled(False)
             self.restore_faces.setText("Rostos (sem modelo)")
         self.restore_faces.setToolTip("GFPGAN: reconstrói olhos, boca e pele de rostos borrados.")
+        self.upscale = make_checkbox("Ampliar foto pequena", False)
+        if not superres.is_available("espcn", 2):
+            self.upscale.setEnabled(False)
+            self.upscale.setText("Ampliar (sem modelo)")
+        self.upscale.setToolTip(f"Super-resolução: amplia fotos pequenas (até {superres.DEFAULT_TARGET} px) "
+                                "recuperando nitidez de bordas e texturas. Foto grande passa direto.")
+        self.upscale_model = QComboBox()
+        self.upscale_model.addItem("ESPCN (rápido)", "espcn")
+        self.upscale_model.addItem("EDSR (melhor, lento)", "edsr")
+        self.upscale_model.setToolTip("EDSR leva até meio minuto e refaz a cada ajuste nos controles. "
+                                      "Use para o resultado final.")
         # ---- Na frente: o que quase todo mundo usa. -----------------------------------
         self.sensitivity.setToolTip("Mais para a direita: apaga mais riscos e manchas (e arrisca apagar "
                                     "detalhes da foto).")
@@ -113,6 +124,7 @@ class ControlsPanel(QWidget):
         form.addRow("Força da limpeza", self.sensitivity)
         form.addRow(self.colorize, self.colorize_strength)
         form.addRow(self.restore_faces)
+        form.addRow(self.upscale)
         hint = QLabel("Sobrou algum dano? Pinte-o na aba Máscara.")
         hint.setWordWrap(True)
         hint.setEnabled(False)                    # texto em cinza: é dica, não controle
@@ -146,6 +158,7 @@ class ControlsPanel(QWidget):
         form = QFormLayout(deep_learning)
         form.addRow("Modelo de cor", self.colorize_model)
         form.addRow("Força nos rostos", self.faces_strength)
+        form.addRow("Ampliação", self.upscale_model)
 
         for group in (detection, corrections, deep_learning):
             advanced_layout.addWidget(group)
@@ -166,6 +179,7 @@ class ControlsPanel(QWidget):
             checkbox.toggled.connect(self._announce_change)
         self.inpaint_method.currentIndexChanged.connect(self._announce_change)
         self.colorize_model.currentIndexChanged.connect(self._announce_change)
+        self.upscale_model.currentIndexChanged.connect(self._announce_change)
 
     def _toggle_advanced(self, show: bool) -> None:
         self.advanced.setVisible(show)
@@ -186,6 +200,9 @@ class ControlsPanel(QWidget):
                 stages.append(("colorizacao", ddcolor.make_ddcolor_stage(strength)))
             else:
                 stages.append(("colorizacao", make_colorize_stage(strength)))
+        # Ampliação por último: colorir e restaurar rostos na foto menor é mais rápido.
+        if self.upscale.isChecked():
+            stages.append(("super_resolucao", superres.make_upscale_stage(self.upscale_model.currentData())))
         return stages
 
     def config(self) -> RestorationConfig:
