@@ -3,6 +3,7 @@
 Ordem das etapas (a chave entre parênteses é o nome em ``result.steps``)::
 
     1. abrir e redimensionar            (original)
+    1b. corrigir a perspectiva, opcional (papel_detectado, perspectiva)  perspective.py
     2. diagnosticar a foto              -> result.diagnosis
     3. tirar a dominante de cor         (cor_neutralizada)        preprocess.py
     4. recuperar o contraste            (niveis_automaticos)      preprocess.py
@@ -34,6 +35,7 @@ import numpy as np
 from . import damage as dmg
 from . import preprocess as pre
 from . import inpaint as inpaint_module
+from . import perspective
 from .inpaint import inpaint
 from .io_utils import resize_max_side
 from .visualize import damage_map
@@ -41,6 +43,8 @@ from .visualize import damage_map
 # Texto de cada etapa, para a GUI mostrar ao usuário.
 STEP_INFO: dict[str, tuple[str, str]] = {
     "original": ("Original", "A foto como foi aberta."),
+    "papel_detectado": ("Papel encontrado", "Em verde, as bordas da foto impressa achadas na foto do celular."),
+    "perspectiva": ("Perspectiva corrigida", "A foto impressa desentortada e recortada, como num scanner."),
     "cor_neutralizada": ("Cor neutralizada", "Remove o amarelado ou o tom sépia."),
     "niveis_automaticos": ("Contraste recuperado", "Devolve o preto e o branco a uma foto desbotada."),
     "mapa_de_danos": ("Mapa de danos", "Azul: riscos achados pela IA. Vermelho: riscos. Laranja: vincos. "
@@ -62,6 +66,7 @@ Inpainter = Callable[[np.ndarray, np.ndarray], np.ndarray]
 @dataclass
 class RestorationConfig:
     max_side: int | None = 2048            # fotos maiores são reduzidas para este tamanho
+    correct_perspective: bool = False      # "foto de uma foto" tirada com o celular (perspective.py)
     preprocess: pre.PreprocessConfig = field(default_factory=pre.PreprocessConfig)
     damage: dmg.DamageConfig = field(default_factory=dmg.DamageConfig)
     repair_damage: bool = True
@@ -117,6 +122,17 @@ def restore(image: np.ndarray,
     with _Timer(timings, "abrir"):
         img, scale = resize_max_side(image, cfg.max_side)
     log.add("original", img)
+
+    if cfg.correct_perspective:
+        # Antes de tudo: o resto do pipeline (e o "antes" da comparação) já vê a foto desentortada.
+        with _Timer(timings, "perspectiva"):
+            corners = perspective.encontrar_papel(img)
+            if corners is None:
+                log.skip("perspectiva", "não achei as bordas de uma foto impressa; a foto segue como está")
+            else:
+                log.add("papel_detectado", perspective.desenhar_cantos(img, corners))
+                img = perspective.retificar(img, corners)
+                log.add("perspectiva", img, f"papel desentortado e recortado: {img.shape[1]}x{img.shape[0]} px")
 
     with _Timer(timings, "diagnostico"):
         diagnosis = pre.diagnose(img)
