@@ -7,6 +7,7 @@ Exemplos::
     python -m retrato_vivo restaurar foto_pb.jpg -o saida --colorir --intensidade-cor 0.7
     python -m retrato_vivo restaurar foto_pequena.jpg -o saida --ampliar --modelo-sr edsr
     python -m retrato_vivo restaurar foto.jpg -o saida --bordas   # Canny x HED, antes e depois
+    python -m retrato_vivo restaurar foto_do_celular.jpg -o saida --perspectiva
     python -m retrato_vivo avaliar foto_boa.jpg -o avaliacao
     python -m retrato_vivo envelhecer foto_boa.jpg -o antiga.png
     python -m retrato_vivo vivo foto.jpg -o saida                 # Retrato Vivo (vídeo 3D)
@@ -31,6 +32,7 @@ def _config_from_args(args: argparse.Namespace) -> RestorationConfig:
     cfg = RestorationConfig(max_side=args.max_lado, inpaint_method=args.metodo)
     cfg.damage.sensitivity = args.sensibilidade
     cfg.damage.detect_large_losses = args.perdas_grandes
+    cfg.correct_perspective = getattr(args, "perspectiva", False)    # só o "restaurar" tem a opção
     return cfg
 
 
@@ -231,6 +233,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("-o", "--saida", default="saida")
     r.add_argument("--painel", action="store_true", help="salva um painel com todas as etapas")
     r.add_argument("--etapas", action="store_true", help="salva cada etapa em um arquivo")
+    r.add_argument("--perspectiva", action="store_true",
+                   help="foto de uma foto tirada com o celular: acha o papel, desentorta e recorta")
     r.add_argument("--bordas", action="store_true",
                    help="salva um painel de bordas Canny x HED (Deep Learning), antes e depois")
     r.add_argument("--explicar", action="store_true",

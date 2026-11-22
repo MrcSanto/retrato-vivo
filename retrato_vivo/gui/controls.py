@@ -54,6 +54,10 @@ class ControlsPanel(QWidget):
         self.detect_spots = make_checkbox("Manchas", damage.detect_spots)
         self.detect_large_losses = make_checkbox("Rasgos e áreas brancas", damage.detect_large_losses)
         self.protect_faces = make_checkbox("Proteger rostos", damage.protect_faces)
+        self.correct_perspective = make_checkbox("Foto tirada do celular", defaults.correct_perspective)
+        self.correct_perspective.setToolTip("Para foto de uma foto impressa, tirada com o celular: acha as bordas "
+                                            "do papel, desentorta e recorta. Funciona melhor com o papel sobre um "
+                                            "fundo escuro. Se não achar o papel, a foto segue como está.")
         self.use_ai = make_checkbox("Riscos com IA", damage.use_ai)
         if not damage_ai.is_available():
             self.use_ai.setEnabled(False)
@@ -122,6 +126,7 @@ class ControlsPanel(QWidget):
         essentials = QGroupBox("Restauração")
         form = QFormLayout(essentials)
         form.addRow("Força da limpeza", self.sensitivity)
+        form.addRow(self.correct_perspective)
         form.addRow(self.colorize, self.colorize_strength)
         form.addRow(self.restore_faces)
         form.addRow(self.upscale)
@@ -207,7 +212,8 @@ class ControlsPanel(QWidget):
 
     def config(self) -> RestorationConfig:
         """A configuração que os controles pedem agora. O que não tem controle fica no padrão."""
-        cfg = RestorationConfig(inpaint_method=self.inpaint_method.currentData())
+        cfg = RestorationConfig(inpaint_method=self.inpaint_method.currentData(),
+                                correct_perspective=self.correct_perspective.isChecked())
 
         cfg.damage.sensitivity = slider_value(self.sensitivity)
         cfg.damage.detect_scratches = self.detect_scratches.isChecked()
