@@ -71,6 +71,27 @@ MODELS: dict[str, tuple[str, str, str]] = {
         "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model.onnx",
         "Depth Anything V2 Small (Yang et al., NeurIPS 2024, Apache-2.0): profundidade (99 MB)",
     ),
+    # Super-resolução (TensorFlow). ESPCN: rápido, padrão. EDSR: melhor e muito mais lento.
+    "espcn_x2": (
+        "ESPCN_x2.pb",
+        "https://github.com/fannymonori/TF-ESPCN/raw/master/export/ESPCN_x2.pb",
+        "Super-resolução ESPCN (Shi et al., CVPR 2016), ampliação 2x",
+    ),
+    "espcn_x4": (
+        "ESPCN_x4.pb",
+        "https://github.com/fannymonori/TF-ESPCN/raw/master/export/ESPCN_x4.pb",
+        "Super-resolução ESPCN (Shi et al., CVPR 2016), ampliação 4x",
+    ),
+    "edsr_x2": (
+        "EDSR_x2.pb",
+        "https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/EDSR_x2.pb",
+        "Super-resolução EDSR (Lim et al., CVPRW 2017), ampliação 2x (38 MB)",
+    ),
+    "edsr_x4": (
+        "EDSR_x4.pb",
+        "https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/EDSR_x4.pb",
+        "Super-resolução EDSR (Lim et al., CVPRW 2017), ampliação 4x (38 MB)",
+    ),
 }
 
 

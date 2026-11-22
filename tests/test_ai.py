@@ -110,3 +110,116 @@ def test_colorization_step_has_a_description():
 def test_cli_accepts_colorization_options():
     args = build_parser().parse_args(["restaurar", "foto.jpg", "--colorir", "--intensidade-cor", "0.6"])
     assert args.colorir and args.intensidade_cor == 0.6
+
+
+# ============================================================ superres.py
+
+superres = importlib.import_module("retrato_vivo.ai.superres")
+tf_fix = importlib.import_module("retrato_vivo.ai.tf_fix")
+
+needs_espcn = pytest.mark.skipif(
+    not (superres.is_available("espcn", 2) and superres.is_available("espcn", 4)),
+    reason="modelos ESPCN não baixados (python -m retrato_vivo modelos)")
+needs_edsr = pytest.mark.skipif(
+    not superres.is_available("edsr", 2),
+    reason="modelo EDSR não baixado (python -m retrato_vivo modelos)")
+
+
+def test_tf_fix_adds_blocksize_to_depth_to_space():
+    """Grafo mínimo montado à mão: um nó comum e um DepthToSpace com block_size=3."""
+    f = tf_fix._message_field
+    attr_value_i3 = tf_fix._varint(3 << 3 | 0) + tf_fix._varint(3)        # AttrValue { i: 3 }
+    attr = f(5, f(1, b"block_size") + f(2, attr_value_i3))
+    graph = f(1, f(1, b"conv") + f(2, b"Conv2D")) + f(1, f(1, b"d2s") + f(2, b"DepthToSpace") + attr)
+
+    fixed_graph, n = tf_fix.fix_depth_to_space(graph)
+    assert n == 1 and b"blocksize" in fixed_graph and len(fixed_graph) > len(graph)
+    assert tf_fix.fix_depth_to_space(fixed_graph)[1] == 0      # aplicar de novo não muda nada
+
+
+@pytest.mark.parametrize("side,target,expected", [
+    (2048, 2048, None), (1700, 2048, None),   # já grande (ou quase)
+    (1200, 2048, 2), (1024, 2048, 2),
+    (800, 2048, 4), (300, 2048, 4),
+])
+def test_choose_factor(side, target, expected):
+    assert superres.choose_factor(side, target) == expected
+
+
+def test_invalid_model_or_factor_raises():
+    with pytest.raises(ValueError):
+        superres.make_upscale_stage("bicubico")
+    with pytest.raises(ValueError):
+        superres.model_name("espcn", 3)
+
+
+def make_detail_scene(h: int = 240, w: int = 320, seed: int = 0) -> np.ndarray:
+    """Cena com bordas finas e texto: o tipo de detalhe que a super-resolução recupera.
+    (Em áreas lisas o bicúbico já é quase perfeito e não há o que ganhar.)"""
+    rng = np.random.default_rng(seed)
+    img = np.full((h, w, 3), 235, np.uint8)
+    for _ in range(12):
+        p1 = tuple(int(v) for v in rng.uniform(0, (w, h)))
+        p2 = tuple(int(v) for v in rng.uniform(0, (w, h)))
+        color = tuple(int(v) for v in rng.uniform(0, 200, 3))
+        cv2.line(img, p1, p2, color, int(rng.uniform(1, 4)), cv2.LINE_AA)
+    for y in range(30, h, 40):
+        cv2.putText(img, "Retrato Vivo 1932", (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                    (40, 30, 20), 2, cv2.LINE_AA)
+    return img
+
+
+@needs_espcn
+@pytest.mark.parametrize("factor", [2, 4])
+def test_espcn_upscales_exactly_and_beats_bicubic(factor):
+    hr = make_detail_scene()
+    lr = cv2.resize(hr, (320 // factor, 240 // factor), interpolation=cv2.INTER_CUBIC)
+    out = superres.upscale_image(lr, factor, "espcn")
+    assert out.shape == hr.shape and out.dtype == np.uint8
+    bicubic = cv2.resize(lr, (320, 240), interpolation=cv2.INTER_CUBIC)
+    assert cv2.PSNR(hr, out) > cv2.PSNR(hr, bicubic)
+
+
+@needs_edsr
+def test_edsr_upscales_small_image():
+    lr = cv2.resize(make_color_scene(), (40, 30), interpolation=cv2.INTER_AREA)
+    out = superres.upscale_image(lr, 2, "edsr")
+    assert out.shape == (60, 80, 3) and out.dtype == np.uint8
+
+
+def test_large_photo_is_not_upscaled():
+    """Não precisa do modelo: a etapa decide pelo tamanho antes de carregar a rede."""
+    res = restore(make_color_scene(1100, 1900), post_stages=[("super_resolucao", superres.upscale)])
+    assert res.notes["super_resolucao"].startswith("pulada")
+    assert res.image.shape[:2] == (1100, 1900)
+
+
+@needs_espcn
+def test_pipeline_upscales_small_photo_up_to_the_target():
+    res = restore(make_color_scene(300, 400),
+                  post_stages=[("super_resolucao", superres.make_upscale_stage("espcn", 1000))])
+    assert max(res.image.shape[:2]) == 1000                 # 4x daria 1600: reduz até o alvo
+    assert res.image.shape[1] / res.image.shape[0] == pytest.approx(400 / 300, rel=0.01)
+    assert "ampliada 4x com ESPCN" in res.notes["super_resolucao"]
+    assert "super_resolucao" in res.timings_ms and "super_resolucao" in STEP_INFO
+
+
+@needs_espcn
+def test_edsr_falls_back_to_espcn_on_big_photo():
+    img = make_color_scene(600, 600)                        # 360 mil pixels > EDSR_MAX_PIXELS
+    res = restore(img, post_stages=[("super_resolucao", superres.make_upscale_stage("edsr", 1200))])
+    assert "ESPCN (EDSR seria lento demais" in res.notes["super_resolucao"]
+    assert res.image.shape[:2] == (1200, 1200)
+
+
+def test_missing_superres_model_is_skipped(monkeypatch):
+    monkeypatch.setattr(superres, "is_available", lambda *a, **k: False)
+    res = restore(make_color_scene(200, 300), post_stages=[("super_resolucao", superres.upscale)])
+    assert "modelo não baixado" in res.notes["super_resolucao"]
+    assert res.image.shape[:2] == (200, 300)
+
+
+def test_cli_accepts_superres_options():
+    args = build_parser().parse_args(["restaurar", "f.jpg", "--ampliar", "--modelo-sr", "edsr",
+                                      "--tamanho-alvo", "1500"])
+    assert args.ampliar and args.modelo_sr == "edsr" and args.tamanho_alvo == 1500

@@ -203,7 +203,7 @@ Resumo do que existe:
 
 ### 6.2 Marco Antonio Santolin: Deep Learning
 
-**Status: 🔄 colorização pronta e testada (16/11); super-resolução a seguir.**
+**Status: 🔄 colorização (16/11) e super-resolução (17/11) prontas e testadas; HED a seguir.**
 Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
 "Deep Learning" do enunciado, então é a parte mais visível da nota de complexidade.
 
@@ -227,9 +227,20 @@ Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
    - Pipeline: BGR → LAB, canal L redimensionado para 224×224, menos 50 → rede → canais ab
      → redimensionar para o tamanho original → juntar com o L original → BGR.
    - Parâmetro de intensidade (0 a 1) para misturar com a versão cinza: a cor fica menos "berrante".
-3. **Super-resolução (prioridade 2).** ESPCN/FSRCNN (`.pb`, ×2/×4) via `cv2.dnn.readNet`
-   (o módulo `dnn_superres` está no *contrib*, que não instalamos). Etapa
-   `upscale(img, result)`. Medir o tempo, porque ×4 em foto grande é lento.
+3. ✅ **Super-resolução (prioridade 2).** Feito em `ai/superres.py`: `upscale` (etapa pronta,
+   ESPCN), `make_upscale_stage(modelo, alvo)` e `upscale_image(img, fator, modelo)`.
+   - Só amplia foto menor que o alvo (padrão 2048 px), escolhe 2x ou 4x e nunca passa do alvo.
+   - **ESPCN** (padrão): ~0,1 s. **EDSR** ("qualidade máxima"): ~25 s numa foto de 300×300; acima
+     de 250 mil pixels cai para o ESPCN e avisa em `notes`.
+   - Ganho medido (PSNR contra a original): ESPCN +0,2 a +1,1 dB sobre o bicúbico em fotos reais,
+     até +2,8 dB em bordas e texto; EDSR ~+1,3 dB. Real, mas modesto: não inventa detalhe.
+   - O OpenCV 4.14 tem um bug ao importar a camada `DepthToSpace` do TensorFlow; `ai/tf_fix.py`
+     corrige o `.pb` em memória ao carregar (o arquivo em disco não muda).
+   - Linha de comando: `restaurar foto.jpg --ampliar [--modelo-sr edsr] [--tamanho-alvo 2048]`.
+   - **GUI (Marcos Paulo):** depois desta etapa `res.image` fica maior que `res.original`; o slider
+     antes/depois precisa redimensionar as duas para o mesmo tamanho (como `visualize.side_by_side` faz).
+     Rodar EDSR sempre na `QThread`, com aviso de que demora.
+   - Na lista de `post_stages`, colocar **depois** da colorização (colorir a foto menor é mais rápido).
 4. **Restauração de rosto (prioridade 3, opcional).** Recortar os rostos usando
    `result.damage.faces` (o YuNet já roda no pipeline), aplicar um modelo de rosto em
    ONNX (ex.: GFPGAN ou CodeFormer) e colar de volta com `cv2.seamlessClone`.
