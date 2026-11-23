@@ -30,6 +30,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+import cv2
 import numpy as np
 
 from . import damage as dmg
@@ -62,11 +63,16 @@ STEP_INFO: dict[str, tuple[str, str]] = {
 
 Inpainter = Callable[[np.ndarray, np.ndarray], np.ndarray]
 
+MIN_MARKED_AREA = 0.01      # fração da foto: cantos marcados à mão que cercam menos que isso não são o papel
+
 
 @dataclass
 class RestorationConfig:
     max_side: int | None = 2048            # fotos maiores são reduzidas para este tamanho
     correct_perspective: bool = False      # "foto de uma foto" tirada com o celular (perspective.py)
+    # Os 4 cantos do papel marcados à mão: (x, y) em pixels da foto como foi aberta, antes de
+    # qualquer redução. ``None``: o pipeline procura o papel sozinho.
+    perspective_corners: np.ndarray | None = None
     preprocess: pre.PreprocessConfig = field(default_factory=pre.PreprocessConfig)
     damage: dmg.DamageConfig = field(default_factory=dmg.DamageConfig)
     repair_damage: bool = True
@@ -84,6 +90,9 @@ class RestorationResult:
     steps: dict[str, np.ndarray] = field(default_factory=dict)   # imagem de cada etapa aplicada
     notes: dict[str, str] = field(default_factory=dict)          # por que cada etapa agiu ou foi pulada
     timings_ms: dict[str, float] = field(default_factory=dict)   # tempo de cada fase
+    # Os 4 cantos do papel usados na correção de perspectiva, em pixels da foto como foi aberta.
+    # ``None``: a correção estava desligada ou não havia papel para desentortar.
+    paper_corners: np.ndarray | None = None
 
 
 PostStage = Callable[[np.ndarray, RestorationResult], np.ndarray]
@@ -100,6 +109,22 @@ class _Timer:
 
     def __exit__(self, *exc):
         self.sink[self.name] = (time.perf_counter() - self.t0) * 1000.0
+
+
+def _marked_corners(corners: np.ndarray, scale: float, shape: tuple[int, ...]) -> np.ndarray | None:
+    """Os cantos marcados à mão, na escala da foto reduzida e em ordem.
+
+    ``None`` se eles não cercam uma área que possa ser o papel: cantos repetidos ou
+    alinhados (a transformação de perspectiva não existe) ou uma área minúscula.
+    """
+    quad = perspective.ordenar_cantos(np.asarray(corners, np.float32) * scale)
+    side = np.roll(quad, -1, axis=0) - quad                 # lado i: do canto i ao canto seguinte
+    next_side = np.roll(side, -1, axis=0)
+    # Produto vetorial de cada lado com o seguinte: positivo nos 4 cantos quando o quadrilátero é convexo.
+    turn = side[:, 0] * next_side[:, 1] - side[:, 1] * next_side[:, 0]
+    if (turn <= 0).any() or cv2.contourArea(quad) < MIN_MARKED_AREA * shape[0] * shape[1]:
+        return None
+    return quad
 
 
 def restore(image: np.ndarray,
@@ -123,16 +148,23 @@ def restore(image: np.ndarray,
         img, scale = resize_max_side(image, cfg.max_side)
     log.add("original", img)
 
+    corners = None
     if cfg.correct_perspective:
         # Antes de tudo: o resto do pipeline (e o "antes" da comparação) já vê a foto desentortada.
         with _Timer(timings, "perspectiva"):
-            corners = perspective.encontrar_papel(img)
+            by_hand = cfg.perspective_corners is not None
+            if by_hand:
+                corners = _marked_corners(cfg.perspective_corners, scale, img.shape)
+            else:
+                corners = perspective.encontrar_papel(img)
             if corners is None:
-                log.skip("perspectiva", "não achei as bordas de uma foto impressa; a foto segue como está")
+                log.skip("perspectiva", ("os cantos marcados não cercam uma área da foto" if by_hand else
+                                         "não achei as bordas de uma foto impressa") + "; a foto segue como está")
             else:
                 log.add("papel_detectado", perspective.desenhar_cantos(img, corners))
                 img = perspective.retificar(img, corners)
-                log.add("perspectiva", img, f"papel desentortado e recortado: {img.shape[1]}x{img.shape[0]} px")
+                log.add("perspectiva", img, f"papel desentortado e recortado: {img.shape[1]}x{img.shape[0]} px"
+                        + (", com os cantos marcados à mão" if by_hand else ""))
 
     with _Timer(timings, "diagnostico"):
         diagnosis = pre.diagnose(img)
@@ -141,7 +173,8 @@ def restore(image: np.ndarray,
         work = pre.normalize(img, cfg.preprocess, diagnosis, log)
 
     result = RestorationResult(image=work, original=img, scale=scale, diagnosis=diagnosis,
-                               steps=log.steps, notes=log.notes, timings_ms=timings)
+                               steps=log.steps, notes=log.notes, timings_ms=timings,
+                               paper_corners=None if corners is None else corners / scale)
 
     if cfg.repair_damage:
         with _Timer(timings, "detectar_danos"):

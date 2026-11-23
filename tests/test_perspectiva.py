@@ -105,6 +105,56 @@ def test_mask_from_the_editor_fits_the_corrected_photo():
     assert second.damage.mask[110, 200] > 0
 
 
+def test_pipeline_uses_the_corners_marked_by_hand_instead_of_detecting():
+    """Papel de margem branca sobre mesa clara: a detecção desiste, mas quem marcou os cantos foi atendido."""
+    img = phone_photo(background=(225, 228, 230))
+    assert restore(img, RestorationConfig(correct_perspective=True)).original.shape == img.shape
+
+    res = restore(img, RestorationConfig(correct_perspective=True, perspective_corners=PAPER_QUAD))
+
+    assert "perspectiva" in res.steps and "à mão" in res.notes["perspectiva"]
+    h, w = res.original.shape[:2]
+    assert 1.15 < w / h < 1.55                              # a proporção do papel, como na detecção automática
+    assert np.array_equal(res.paper_corners, PAPER_QUAD)
+
+
+def test_corners_marked_by_hand_are_measured_on_the_photo_as_it_was_opened():
+    """A foto grande é reduzida antes de tudo; os cantos acompanham a redução."""
+    img = phone_photo()
+    cfg = RestorationConfig(correct_perspective=True, perspective_corners=PAPER_QUAD)
+    full = restore(img, cfg)
+
+    cfg.max_side = 600                                      # a mesma foto, restaurada pela metade do tamanho
+    half = restore(img, cfg)
+
+    assert half.scale == 0.5
+    assert np.abs(np.array(half.original.shape[:2]) - np.array(full.original.shape[:2]) / 2).max() <= 1
+    assert np.allclose(half.paper_corners, PAPER_QUAD)
+
+
+def test_pipeline_reports_the_corners_it_found():
+    res = restore(phone_photo(), RestorationConfig(correct_perspective=True))
+    assert np.abs(res.paper_corners - PAPER_QUAD).max() < 12
+
+
+def test_pipeline_reports_no_corners_without_a_paper():
+    assert restore(make_scene(400, 600), RestorationConfig(correct_perspective=True)).paper_corners is None
+    assert restore(phone_photo()).paper_corners is None     # correção desligada
+
+
+@pytest.mark.parametrize("corners", [
+    [[100, 100], [500, 100], [300, 100], [100, 500]],       # três pontos na mesma linha
+    [[100, 100], [100, 100], [500, 400], [100, 400]],       # dois cantos no mesmo lugar
+    [[100, 100], [103, 100], [103, 103], [100, 103]],       # pequeno demais para ser o papel
+])
+def test_corners_that_do_not_surround_a_paper_leave_the_photo_alone(corners):
+    img = phone_photo()
+    res = restore(img, RestorationConfig(correct_perspective=True, perspective_corners=np.float32(corners)))
+    assert res.original.shape == img.shape
+    assert res.notes["perspectiva"].startswith("pulada")
+    assert res.paper_corners is None
+
+
 def test_perspective_steps_have_descriptions():
     assert "papel_detectado" in STEP_INFO and "perspectiva" in STEP_INFO
 
