@@ -323,7 +323,9 @@ rodam sem tela.
     sem papel encontrado, a aba oferece 4 cantos para o usuário levar até as pontas da foto.
 
 **Também é responsabilidade do Marcos Paulo:** README final (prints e link do vídeo) e
-gravação do vídeo demo de 30 a 60 s.
+gravação do vídeo demo de 30 a 60 s. As capturas de tela entraram no README em 23/11
+(`docs/img/`, feitas com as fotos de exemplo de `imagens/`). Falta gravar o vídeo e pôr o
+link no README.
 
 ---
 
@@ -456,5 +458,7 @@ colorização guiada por clique; laudo de restauração em HTML/PDF.
 - [x] **Flexibilidade de arquivos:** qualquer formato, tamanho, P&B/colorida, 16 bits, alfa, acentos, celular
 - [x] Repo **compartilhado com `rafaelrieder`**
 - [ ] **Commits dos três, equilibrados**
-- [ ] Repo só com código-fonte e dependências (sem pesos nem fotos pessoais)
+- [x] Repo só com código-fonte e dependências (sem pesos nem fotos pessoais): `models/` fica
+      fora do git, e as fotos de `imagens/` e de `docs/img/` são de exemplo, nenhuma pessoal
+      (conferido em 23/11)
 - [ ] Ensaio de **até 10 min**, com fotos de teste que nunca foram usadas no desenvolvimento
