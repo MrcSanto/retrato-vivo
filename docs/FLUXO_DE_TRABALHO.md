@@ -270,9 +270,9 @@ Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
 
 ### 6.3 Marcos Paulo de Medeiros: interface gráfica (GUI)
 
-**Status: ✅ itens 1 a 8 prontos e testados (18/11), já com o polimento: restauração
-refeita ao mexer nos controles, e desfazer e zoom no editor de máscara. Falta só o item 9
-(abas dos extras), que depende dos extras.** Como usar: seção "Interface gráfica" do
+**Status: ✅ itens 1 a 10 prontos e testados. Itens 1 a 8 com o polimento (18/11): restauração
+refeita ao mexer nos controles, e desfazer e zoom no editor de máscara. As abas dos extras
+(item 9) foram feitas pelo Igor (20/11) e corrigidas em 23/11.** Como usar: seção "Interface gráfica" do
 [README](../README.md). Pasta: `retrato_vivo/gui/`. Vale 1,0 ponto ("qualidade da
 interface e desempenho"), e é por ela que o professor vai testar com fotos dele.
 
@@ -307,7 +307,10 @@ rodam sem tela.
    arrasta a foto ampliada).
 7. ✅ Salvar resultado, mais "exportar comparativo" (`visualize.side_by_side`).
 8. ✅ Barra de status com `res.damage.stats` e `res.timings_ms`.
-9. Abas dos extras (ver seção 7).
+9. ✅ Abas dos extras (ver seção 7): "Retrato Vivo" e "Máquina do tempo", feitas pelo Igor em
+   20/11 (`gui/extras.py`). Corrigido em 23/11: o retrato de uma foto anterior não aparece mais
+   se outra foto chegar no meio da criação, e o "Restaurar de volta" roda fora da thread da
+   interface (travava a janela por cerca de 4 s na CPU). Testes em `tests/test_gui_extras.py`.
 10. ✅ Opção "Ampliar" e aba "Bordas" (feitas pelo Marco em 22/11, ver 6.2 itens 3 e 9).
 
 **Também é responsabilidade do Marcos Paulo:** README final (prints e link do vídeo) e
