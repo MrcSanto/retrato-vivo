@@ -7,6 +7,8 @@ Restaurador de fotos antigas com OpenCV e Deep Learning. Trabalho final de
 
 🎬 **Vídeo demonstrativo:** _(em breve)_
 
+![A interface comparando a foto riscada (antes) com a restaurada e colorida (depois)](docs/img/antes_depois.jpg)
+
 ## O que faz
 
 - **Mede** a foto (cor, ruído, contraste) e só aplica as correções de que ela precisa.
@@ -110,6 +112,16 @@ Abra com `python -m retrato_vivo.gui`. Sem argumentos, já abre a primeira foto 
 10. **Salvar:** "Salvar resultado" (Ctrl+S) e "Exportar comparativo".
 
 A barra de status mostra os danos encontrados, o tempo e se a IA está rodando na GPU ou na CPU.
+
+### Capturas de tela
+
+Feitas com as fotos de exemplo da pasta `imagens/`.
+
+| | |
+|---|---|
+| ![Aba Etapas mostrando o mapa de danos](docs/img/etapas.jpg) **Etapas:** o mapa de danos da foto riscada. Azul e vermelho são riscos, laranja são vincos, amarelo são manchas e o quadro verde é o rosto protegido. | ![Aba Máscara com o rasgo pintado](docs/img/mascara.jpg) **Máscara:** o rasgo pintado com o pincel (em ciano), por cima do que a detecção achou. |
+| ![Aba Perspectiva com o contorno do papel](docs/img/perspectiva.jpg) **Perspectiva:** o contorno verde é o papel encontrado; cada canto pode ser arrastado. A foto de exemplo foi simulada como foto de celular. | ![Aba Bordas com Canny e HED](docs/img/bordas.jpg) **Bordas:** Canny em cima e HED embaixo, antes e depois da restauração. |
+| ![Retrato Vivo em movimento](docs/img/retrato_vivo.gif) **Retrato Vivo:** a foto restaurada e colorida vira um vídeo com efeito 3D. | ![Aba Máquina do tempo](docs/img/maquina_do_tempo.jpg) **Máquina do tempo:** uma selfie vira foto de 1920 (à esquerda) e é restaurada de volta (à direita). |
 
 ## Documentação
 
