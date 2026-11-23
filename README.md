@@ -26,7 +26,8 @@ Restaurador de fotos antigas com OpenCV e Deep Learning. Trabalho final de
 - **Máquina do tempo**: uma foto atual vira foto de 1900, 1920, 1950, 1970 ou Polaroid.
 - **Amplia** fotos pequenas com super-resolução (ESPCN, rápido, ou EDSR, melhor e mais lento).
 - **Desentorta foto de foto**: quem fotografa uma foto impressa com o celular tem o papel torto
-  e com a mesa em volta; o sistema acha o papel, corrige a perspectiva e recorta.
+  e com a mesa em volta; o sistema acha o papel, corrige a perspectiva e recorta. Se ele errar
+  um canto, dá para arrastá-lo na interface.
 - **Compara as bordas** antes e depois pelo método clássico (Canny) e por Deep Learning (HED).
 
 ## Como rodar (qualquer PC)
@@ -98,12 +99,15 @@ Abra com `python -m retrato_vivo.gui`. Sem argumentos, já abre a primeira foto 
 4. **Etapas:** a foto em cada ponto do processamento e o que cada etapa decidiu.
 5. **Máscara:** pinte com o pincel o que a detecção não pegou (rasgos, por exemplo) e clique em
    "Aplicar correções". A borracha desmarca o que foi marcado por engano.
-6. **Bordas:** Canny (clássico) e HED (rede neural), antes e depois da restauração.
+6. **Perspectiva:** com "Foto tirada do celular" marcada, o contorno verde mostra o papel
+   encontrado. Se um canto ficou fora do lugar, ou se o papel não foi achado, arraste os cantos
+   até as pontas da foto impressa. "Detectar de novo" volta à detecção automática.
+7. **Bordas:** Canny (clássico) e HED (rede neural), antes e depois da restauração.
    O clássico marca qualquer textura; a rede marca só os contornos dos objetos.
-7. **Retrato Vivo:** "Criar Retrato Vivo" transforma a foto restaurada num vídeo 3D; salve em MP4 ou GIF.
-8. **Máquina do tempo:** escolha uma época; "Restaurar de volta" mostra a restauração desfazendo o
+8. **Retrato Vivo:** "Criar Retrato Vivo" transforma a foto restaurada num vídeo 3D; salve em MP4 ou GIF.
+9. **Máquina do tempo:** escolha uma época; "Restaurar de volta" mostra a restauração desfazendo o
    envelhecimento.
-9. **Salvar:** "Salvar resultado" (Ctrl+S) e "Exportar comparativo".
+10. **Salvar:** "Salvar resultado" (Ctrl+S) e "Exportar comparativo".
 
 A barra de status mostra os danos encontrados, o tempo e se a IA está rodando na GPU ou na CPU.
 

@@ -140,6 +140,7 @@ No mapa de danos: **vermelho** = risco, **laranja** = vinco, **amarelo** = manch
 | Controle | Campo | Efeito |
 |---|---|---|
 | Foto tirada do celular | `cfg.correct_perspective` | Desentorta e recorta a foto impressa (padrão: desligado) |
+| Cantos do papel (aba Perspectiva) | `cfg.perspective_corners` | Os 4 cantos marcados à mão, em pixels da foto como foi aberta, no lugar da detecção automática (padrão: `None`, o pipeline detecta) |
 | Sensibilidade (0 a 1) | `cfg.damage.sensitivity` | Mais alto pega mais dano e mais falso positivo |
 | Riscos com IA | `cfg.damage.use_ai` | Soma o detector de riscos com IA (padrão: ligado) |
 | Ligar/desligar riscos, vincos, manchas | `cfg.damage.detect_*` | |
