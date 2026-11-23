@@ -21,6 +21,7 @@ from .edges_view import EdgesView
 from .extras import LivingPortraitView, TimeMachineView
 from .folder_nav import PhotoFolder, PhotoPicker
 from .mask_editor import MaskEditor
+from .perspective_editor import PerspectiveEditor, same_corners
 from .steps_view import StepsView
 from .worker import RestoreWorker
 
@@ -50,6 +51,13 @@ def restoration_summary(result: RestorationResult) -> str:
         f"rostos protegidos: {stats['rostos_protegidos']:.0f}",
         time_note,
     ])
+
+
+def _same_framing(first: RestorationConfig, second: RestorationConfig) -> bool:
+    """As duas configurações enquadram a foto do mesmo jeito? Depende só da correção de perspectiva."""
+    if not first.correct_perspective or not second.correct_perspective:
+        return first.correct_perspective == second.correct_perspective     # desligada, os cantos não contam
+    return same_corners(first.perspective_corners, second.perspective_corners)
 
 
 def _decimal(value: float) -> str:
@@ -113,6 +121,9 @@ class MainWindow(QMainWindow):
         self.mask_editor = MaskEditor()
         self.tabs.addTab(self.mask_editor, "Máscara")
         self.mask_editor.apply_button.clicked.connect(self.restore_photo)
+        self.perspective_editor = PerspectiveEditor()
+        self.tabs.addTab(self.perspective_editor, "Perspectiva")
+        self.perspective_editor.changed.connect(self.rerun_timer.start)    # como uma mexida nos controles
         self.edges_view = EdgesView()
         self.tabs.addTab(self.edges_view, "Bordas")
         # Diferencial do projeto (extras.py).
@@ -171,6 +182,7 @@ class MainWindow(QMainWindow):
         self.compare_view.set_photo(image)
         self.steps_view.clear()
         self.mask_editor.clear()             # a pintura era da foto anterior
+        self.perspective_editor.set_photo(image)    # os cantos marcados também
         self.edges_view.set_result(None)
         self.living_view.set_source(None)    # o Retrato Vivo usa a foto restaurada, que ainda não existe
         self.time_machine.set_source(image)
@@ -242,6 +254,7 @@ class MainWindow(QMainWindow):
         """Restaura a foto aberta em segundo plano. O resultado chega em ``_show_result``."""
         self._wait_for_worker()
         config = self.controls.config()
+        config.perspective_corners = self.perspective_editor.marked_corners()
         mask_add, mask_remove = self._masks_for(config)
         self.worker = RestoreWorker(self.image, config,
                                     post_stages=self.controls.post_stages(),
@@ -258,7 +271,7 @@ class MainWindow(QMainWindow):
         A correção de perspectiva recorta a foto. A pintura feita num enquadramento não vale
         para o outro e nem tem o mesmo tamanho: o pipeline falharia ao aplicá-la.
         """
-        if self.result is not None and config.correct_perspective != self._result_config.correct_perspective:
+        if self.result is not None and not _same_framing(config, self._result_config):
             self.mask_editor.canvas.clear_masks()
             return None, None
         return self.mask_editor.canvas.masks()
@@ -277,6 +290,7 @@ class MainWindow(QMainWindow):
         self.compare_view.set_comparison(result.original, result.image)
         self.steps_view.set_result(result)
         self.mask_editor.set_result(result)
+        self.perspective_editor.show_result(result, self._result_config)
         self.edges_view.set_result(result)
         self.living_view.set_source(result.image)
         self._enable_saving(True)

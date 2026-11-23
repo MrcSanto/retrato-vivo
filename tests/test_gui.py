@@ -28,14 +28,15 @@ from retrato_vivo.gui.controls import ControlsPanel
 from retrato_vivo.gui.convert import fit_rect, to_qimage
 from retrato_vivo.gui.main_window import MainWindow, restoration_summary
 from retrato_vivo.gui.mask_editor import MAX_UNDO_STEPS, MAX_ZOOM, MaskCanvas, MaskEditor, overlay_image
+from retrato_vivo.gui.perspective_editor import PAPER_COLOR, CornerCanvas, PerspectiveEditor
 from retrato_vivo.gui.photo_view import PhotoView
 from retrato_vivo.gui.steps_view import StepsView
 from retrato_vivo.gui.worker import RestoreWorker
 from retrato_vivo.io_utils import load_image, save_image
-from retrato_vivo.pipeline import STEP_INFO, RestorationConfig, restore
+from retrato_vivo.pipeline import STEP_INFO, RestorationConfig, RestorationResult, restore
 from retrato_vivo.visualize import side_by_side
 
-from test_perspectiva import phone_photo
+from test_perspectiva import PAPER_QUAD, phone_photo
 
 RED_BGR, GREEN_BGR, BLUE_BGR = (0, 0, 255), (0, 255, 0), (255, 0, 0)     # o OpenCV guarda os canais como azul, verde, vermelho
 WHITE_BGR = (255, 255, 255)
@@ -1837,3 +1838,336 @@ def test_closing_the_window_waits_for_the_running_restoration(window, photo_file
     QApplication.processEvents()        # só entrega os sinais já emitidos; não espera a thread
 
     assert window.result is not None
+
+
+# ===================================================== perspective_editor.py
+
+# Um papel no meio de uma foto de 400x200. Na área de 200x100 dos testes, cada pixel da tela vale 2 da foto:
+# os cantos aparecem em (50, 25), (150, 25), (150, 75) e (50, 75).
+PAPER_CORNERS = np.float32([[100, 50], [300, 50], [300, 150], [100, 150]])
+PAPER_RGB = PAPER_COLOR.getRgb()[:3]
+LIGHT_TABLE = (225, 228, 230)       # mesa clara: o papel de margem branca some nela e a detecção desiste
+
+
+def emissions_of(signal) -> list:
+    """Lista que ganha um item cada vez que o sinal é emitido."""
+    emitted = []
+    signal.connect(lambda *values: emitted.append(values))
+    return emitted
+
+
+@pytest.fixture
+def corner_canvas(app) -> CornerCanvas:
+    """Área de 200x100 mostrando uma foto vermelha de 400x200 com o contorno de um papel no meio."""
+    canvas = CornerCanvas()
+    canvas.resize(200, 100)
+    canvas.set_photo(np.full((200, 400, 3), RED_BGR, np.uint8))
+    canvas.show_corners(PAPER_CORNERS)
+    return canvas
+
+
+def test_dragging_a_corner_moves_only_that_corner(corner_canvas):
+    released = emissions_of(corner_canvas.moved)
+
+    drag(corner_canvas, (50, 25), (20, 10))         # o canto de cima à esquerda vai para (40, 20) na foto
+
+    assert corner_canvas.corners[0].tolist() == [40, 20]
+    assert np.array_equal(corner_canvas.corners[1:], PAPER_CORNERS[1:])
+    assert len(released) == 1                       # avisa uma vez só, ao soltar
+
+
+def test_corner_grabbed_off_its_center_does_not_jump_to_the_mouse(corner_canvas):
+    drag(corner_canvas, (56, 29), (26, 14))         # o mouse andou (-30, -15) na tela: o canto anda o mesmo
+
+    assert corner_canvas.corners[0].tolist() == [40, 20]
+
+
+def test_click_on_a_corner_without_dragging_changes_nothing(corner_canvas):
+    released = emissions_of(corner_canvas.moved)
+
+    drag(corner_canvas, (56, 29), (56, 29))
+
+    assert np.array_equal(corner_canvas.corners, PAPER_CORNERS)
+    assert not released
+
+
+def test_click_far_from_every_corner_changes_nothing(corner_canvas):
+    released = emissions_of(corner_canvas.moved)
+
+    drag(corner_canvas, (100, 50), (20, 10))        # começa no meio do papel, longe dos 4 cantos
+
+    assert np.array_equal(corner_canvas.corners, PAPER_CORNERS)
+    assert not released
+
+
+def test_corner_stops_at_the_edge_of_the_photo(corner_canvas):
+    drag(corner_canvas, (50, 25), (-40, -40))
+    drag(corner_canvas, (150, 75), (900, 900))
+
+    assert corner_canvas.corners[0].tolist() == [0, 0]
+    assert corner_canvas.corners[2].tolist() == [399, 199]
+
+
+def test_canvas_without_corners_ignores_the_mouse(corner_canvas):
+    corner_canvas.show_corners(None)
+    released = emissions_of(corner_canvas.moved)
+
+    drag(corner_canvas, (50, 25), (20, 10))
+
+    assert corner_canvas.corners is None
+    assert not released
+
+
+def test_paper_outline_is_drawn_over_the_photo(corner_canvas):
+    with_outline = screenshot(corner_canvas)
+    corner_canvas.show_corners(None)
+    without_outline = screenshot(corner_canvas)
+
+    top_side = with_outline[23:28, 100]             # a coluna do meio, na altura do lado de cima do papel
+    assert (top_side == PAPER_RGB).all(axis=-1).any()
+    assert tuple(with_outline[50, 100]) == RED_RGB  # dentro do contorno a foto continua aparecendo
+    assert pixels_of_another_color(without_outline, RED_RGB) == 0
+
+
+def test_corners_that_arrive_during_a_drag_do_not_pull_the_corner_back(corner_canvas):
+    corner_canvas.mousePressEvent(mouse(PRESS, 50, 25))
+    corner_canvas.mouseMoveEvent(mouse(MOVE, 30, 15))
+
+    corner_canvas.show_corners(PAPER_CORNERS)       # chega o resultado de uma restauração pedida antes
+    corner_canvas.mouseReleaseEvent(mouse(RELEASE, 30, 15))
+
+    assert corner_canvas.corners[0].tolist() == [60, 30]
+
+
+def restoration(paper_corners: np.ndarray | None) -> RestorationResult:
+    """O resultado de uma restauração da foto de 400x200, com os cantos que o pipeline usou."""
+    photo = np.full((200, 400, 3), RED_BGR, np.uint8)
+    return RestorationResult(image=photo, original=photo, scale=1.0, diagnosis=None, paper_corners=paper_corners)
+
+
+def asking_for(corners: np.ndarray | None = None, correcting: bool = True) -> RestorationConfig:
+    """A configuração de um pedido de restauração: com a correção ligada ou não, e com cantos marcados ou não."""
+    return RestorationConfig(correct_perspective=correcting, perspective_corners=corners)
+
+
+@pytest.fixture
+def perspective_editor(app) -> PerspectiveEditor:
+    """A aba com a foto de 400x200 aberta, numa área de 200x100."""
+    editor = PerspectiveEditor()
+    editor.set_photo(np.full((200, 400, 3), RED_BGR, np.uint8))
+    editor.canvas.resize(200, 100)
+    return editor
+
+
+@pytest.fixture
+def editor_with_marked_corner(perspective_editor) -> PerspectiveEditor:
+    """O pipeline achou o papel e o usuário arrastou o canto de cima à esquerda para (40, 20)."""
+    perspective_editor.show_result(restoration(PAPER_CORNERS), asking_for())
+    drag(perspective_editor.canvas, (50, 25), (20, 10))
+    return perspective_editor
+
+
+def test_editor_starts_from_the_corners_the_pipeline_found(perspective_editor):
+    perspective_editor.show_result(restoration(PAPER_CORNERS), asking_for())
+
+    assert np.array_equal(perspective_editor.canvas.corners, PAPER_CORNERS)
+    assert perspective_editor.marked_corners() is None      # ninguém marcou nada: o pipeline segue detectando
+    assert not perspective_editor.detect_button.isEnabled()
+
+
+def test_editor_offers_four_corners_to_drag_when_no_paper_was_found(perspective_editor):
+    perspective_editor.show_result(restoration(None), asking_for())
+
+    corners = perspective_editor.canvas.corners
+    assert corners.shape == (4, 2)
+    assert (corners > 0).all() and (corners[:, 0] < 399).all() and (corners[:, 1] < 199).all()     # dentro da foto
+    assert perspective_editor.marked_corners() is None      # são só o ponto de partida
+    assert "Não achei" in perspective_editor.status.text()
+
+
+def test_editor_shows_no_corners_while_the_correction_is_off(perspective_editor):
+    perspective_editor.show_result(restoration(None), asking_for(correcting=False))
+
+    assert perspective_editor.canvas.corners is None
+    assert "Foto tirada do celular" in perspective_editor.status.text()
+
+
+def test_dragging_one_corner_marks_the_four_by_hand(perspective_editor):
+    perspective_editor.show_result(restoration(PAPER_CORNERS), asking_for())
+    changes = emissions_of(perspective_editor.changed)
+
+    drag(perspective_editor.canvas, (50, 25), (20, 10))
+
+    assert perspective_editor.marked_corners().tolist() == [[40, 20], [300, 50], [300, 150], [100, 150]]
+    assert len(changes) == 1                                # a janela restaura de novo
+    assert perspective_editor.detect_button.isEnabled()
+
+
+def test_marked_corners_stay_where_the_user_left_them(editor_with_marked_corner):
+    editor, marked = editor_with_marked_corner, editor_with_marked_corner.marked_corners()
+
+    editor.show_result(restoration(marked), asking_for(marked))
+
+    assert np.array_equal(editor.canvas.corners, marked)
+    assert np.array_equal(editor.marked_corners(), marked)
+    assert "à mão" in editor.status.text()
+
+
+def test_editor_says_when_the_marked_corners_were_refused(editor_with_marked_corner):
+    editor = editor_with_marked_corner
+
+    editor.show_result(restoration(None), asking_for(editor.marked_corners()))     # o pipeline não os usou
+
+    assert "não cercam" in editor.status.text()
+
+
+def test_result_asked_before_the_corner_moved_does_not_undo_the_move(editor_with_marked_corner):
+    editor, marked = editor_with_marked_corner, editor_with_marked_corner.marked_corners()
+
+    editor.show_result(restoration(None), asking_for())     # pedido antigo, ainda sem os cantos marcados
+
+    assert np.array_equal(editor.canvas.corners, marked)
+    assert "à mão" in editor.status.text()                  # e não "não achei o papel" nem "cantos recusados"
+
+
+def test_result_asked_with_the_marked_corners_is_not_taken_for_a_detection(editor_with_marked_corner):
+    editor, marked = editor_with_marked_corner, editor_with_marked_corner.marked_corners()
+    editor.detect_button.click()
+
+    editor.show_result(restoration(marked), asking_for(marked))     # pedido antigo, ainda com os cantos marcados
+
+    assert "encontrado" not in editor.status.text()         # o papel ainda está sendo procurado
+
+
+def test_detect_again_forgets_the_corners_marked_by_hand(editor_with_marked_corner):
+    editor = editor_with_marked_corner
+    changes = emissions_of(editor.changed)
+
+    editor.detect_button.click()
+
+    assert editor.marked_corners() is None
+    assert len(changes) == 1                                # a janela restaura de novo, agora detectando
+    assert not editor.detect_button.isEnabled()
+
+
+def test_marked_corners_come_back_when_the_correction_is_turned_on_again(editor_with_marked_corner):
+    editor, marked = editor_with_marked_corner, editor_with_marked_corner.marked_corners()
+
+    editor.show_result(restoration(None), asking_for(marked, correcting=False))
+    hidden = editor.canvas.corners
+    editor.show_result(restoration(marked), asking_for(marked))
+
+    assert hidden is None
+    assert np.array_equal(editor.canvas.corners, marked)
+
+
+def test_opening_another_photo_forgets_the_marked_corners(editor_with_marked_corner):
+    editor = editor_with_marked_corner
+
+    editor.set_photo(np.full((100, 100, 3), BLUE_BGR, np.uint8))
+
+    assert editor.marked_corners() is None
+    assert editor.canvas.corners is None
+    assert not editor.detect_button.isEnabled()
+
+
+# ------------------------------------------------- a aba Perspectiva na janela
+
+@pytest.fixture
+def perspective_window(window) -> MainWindow:
+    """A janela na aba Perspectiva, com "Foto tirada do celular" marcada e ainda sem foto."""
+    window.resize(1200, 800)
+    window.show()
+    window.tabs.setCurrentWidget(window.perspective_editor)
+    window.rerun_timer.setInterval(10)
+    window.controls.correct_perspective.setChecked(True)
+    let_qt_run(0.05)        # o pedido de restaurar de novo passa em branco: ainda não há foto
+    return window
+
+
+def on_screen(window: MainWindow, photo_point) -> tuple[float, float]:
+    """Onde o ponto (x, y) da foto aberta aparece na área da aba Perspectiva."""
+    rect = window.perspective_editor.canvas.photo_rect()
+    height, width = window.image.shape[:2]
+    return (rect.left() + photo_point[0] * rect.width() / width,
+            rect.top() + photo_point[1] * rect.height() / height)
+
+
+def drag_corner(window: MainWindow, index: int, photo_point) -> None:
+    """Arrasta o canto ``index`` do contorno até o ponto (x, y) da foto."""
+    canvas = window.perspective_editor.canvas
+    drag(canvas, on_screen(window, canvas.corners[index]), on_screen(window, photo_point))
+
+
+def test_photo_on_a_light_table_is_straightened_after_its_corners_are_marked(
+        restore_calls, perspective_window, tmp_path, warnings):
+    window = perspective_window
+    window.open_photo(save_image(tmp_path / "mesa_clara.png", phone_photo(background=LIGHT_TABLE)))
+    wait_until(lambda: window.result is not None, PHONE_PHOTO_TIMEOUT_S)
+    without_help = window.result
+
+    for index, corner in enumerate(PAPER_QUAD):
+        drag_corner(window, index, corner)
+    wait_for_the_next_result(window, without_help, warnings)
+
+    assert not warnings
+    assert without_help.original.shape == window.image.shape        # sozinho, o pipeline não achou o papel
+    assert np.abs(restore_calls[-1]["config"].perspective_corners - PAPER_QUAD).max() < 3
+    height, width = window.result.original.shape[:2]
+    assert "perspectiva" in window.result.steps
+    assert 1.15 < width / height < 1.55                             # a proporção do papel
+
+
+@pytest.fixture
+def window_with_marked_corner(restore_calls, perspective_window, phone_photo_file, warnings) -> MainWindow:
+    """Foto de celular aberta, papel achado pelo pipeline e um canto arrastado 30 pixels pelo usuário."""
+    window = perspective_window
+    window.open_photo(phone_photo_file)
+    wait_until(lambda: window.result is not None, PHONE_PHOTO_TIMEOUT_S)
+    detected = window.result
+    drag_corner(window, 0, detected.paper_corners[0] + 30)
+    wait_for_the_next_result(window, detected, warnings)
+    return window
+
+
+def paint_and_come_back(window: MainWindow) -> None:
+    """Pinta um ponto na aba Máscara e volta para a aba Perspectiva."""
+    window.tabs.setCurrentWidget(window.mask_editor)
+    let_qt_run(0.02)        # a aba recém-mostrada ganha o tamanho dela
+    paint_on_the_mask_tab(window, 0.5)
+    window.tabs.setCurrentWidget(window.perspective_editor)
+    let_qt_run(0.02)
+
+
+def test_painting_is_dropped_when_a_marked_corner_moves(restore_calls, window_with_marked_corner, warnings):
+    window, marked = window_with_marked_corner, window_with_marked_corner.result
+    paint_and_come_back(window)
+
+    drag_corner(window, 0, marked.paper_corners[0] + 30)
+    wait_for_the_next_result(window, marked, warnings)
+
+    assert not warnings
+    assert restore_calls[-1]["mask_add"] is None        # a pintura era de outro recorte da foto
+
+
+def test_painting_is_kept_while_the_marked_corners_stay_put(restore_calls, window_with_marked_corner, warnings):
+    window, marked = window_with_marked_corner, window_with_marked_corner.result
+    paint_and_come_back(window)
+
+    window.controls.sharpen.setChecked(False)           # outra mexida, que não muda o recorte
+    wait_for_the_next_result(window, marked, warnings)
+
+    assert not warnings
+    assert restore_calls[-1]["mask_add"].any()
+    assert np.array_equal(restore_calls[-1]["config"].perspective_corners, marked.paper_corners)
+
+
+def test_another_photo_starts_without_the_corners_marked_on_the_previous_one(
+        restore_calls, window_with_marked_corner, tmp_path, warnings):
+    window = window_with_marked_corner
+
+    window.open_photo(save_image(tmp_path / "outra.png", phone_photo(seed=1)))     # abrir já esvazia o resultado
+    wait_until(lambda: window.result is not None or warnings, PHONE_PHOTO_TIMEOUT_S)
+
+    assert not warnings
+    assert restore_calls[-1]["config"].perspective_corners is None
