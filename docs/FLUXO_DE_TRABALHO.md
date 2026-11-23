@@ -304,7 +304,9 @@ rodam sem tela.
    automática não pega. O que a borracha desmarca continua colorido no mapa de danos,
    porque o mapa pinta as detecções por tipo; o reparo respeita a borracha. Tem desfazer
    (Ctrl+Z, os 10 últimos traços) e zoom de até 8 vezes (roda do mouse; o botão direito
-   arrasta a foto ampliada).
+   arrasta a foto ampliada). Marcar ou desmarcar "Foto tirada do celular" apaga a pintura,
+   porque a foto muda de enquadramento (corrigido em 23/11: antes a restauração falhava
+   com `IndexError` quando a caixa era marcada com a foto já aberta).
 7. ✅ Salvar resultado, mais "exportar comparativo" (`visualize.side_by_side`).
 8. ✅ Barra de status com `res.damage.stats` e `res.timings_ms`.
 9. ✅ Abas dos extras (ver seção 7): "Retrato Vivo" e "Máquina do tempo", feitas pelo Igor em
