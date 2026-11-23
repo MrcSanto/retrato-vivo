@@ -52,6 +52,7 @@ class LivingPortraitView(QWidget):
         self.source: np.ndarray | None = None       # a foto restaurada (vem da janela)
         self.portrait: lp.LivingPortrait | None = None
         self.worker: TaskWorker | None = None
+        self._creating_from: np.ndarray | None = None   # a foto de que um retrato está sendo criado agora
         self._frame = 0
 
         self.create_button = QPushButton("Criar Retrato Vivo")
@@ -91,7 +92,7 @@ class LivingPortraitView(QWidget):
         self.source, self.portrait = image, None
         self.view.clear()
         self._enable_saving(False)
-        self.create_button.setEnabled(image is not None and lp.is_available())
+        self._update_create_button()
 
     def create(self) -> None:
         if self.source is None:
@@ -100,15 +101,19 @@ class LivingPortraitView(QWidget):
         source = self.source
         self.worker = TaskWorker(lambda: lp.make_living_portrait(source))
         self.worker.done.connect(self._show_portrait)
-        self.worker.failed.connect(lambda msg: (self._busy(False),
+        self.worker.failed.connect(lambda msg: (self._set_creating_from(None),
                                                 QMessageBox.warning(self, "Retrato Vivo", msg)))
-        self._busy(True)
+        self._set_creating_from(source)
         self.status.setText("Criando o Retrato Vivo… (alguns segundos)")
         self.worker.start()
 
     def _show_portrait(self, portrait: lp.LivingPortrait) -> None:
+        source = self._creating_from
+        self._set_creating_from(None)
+        if source is not self.source:      # a foto mudou no meio da criação: este retrato é da anterior
+            self.status.clear()
+            return
         self.portrait, self._frame = portrait, 0
-        self._busy(False)
         self._enable_saving(True)
         seconds = sum(portrait.timings_ms.values()) / 1000
         self.status.setText(f"{len(portrait.frames)} quadros criados em {seconds:.1f} s ({portrait.device}).")
@@ -140,10 +145,18 @@ class LivingPortraitView(QWidget):
             return
         self.status.setText(f"Salvo em {saved}")
 
-    def _busy(self, busy: bool) -> None:
-        self.create_button.setEnabled(not busy and self.source is not None)
-        if busy:
+    def _set_creating_from(self, source: np.ndarray | None) -> None:
+        """Guarda de que foto um retrato está sendo criado (``None`` = nenhuma criação em andamento)."""
+        self._creating_from = source
+        self._update_create_button()
+        if source is not None:
             self.timer.stop()
+
+    def _update_create_button(self) -> None:
+        # Fica travado enquanto um retrato é criado, mesmo que a foto mude no meio: um segundo
+        # clique esperaria a thread anterior terminar, com a janela parada.
+        self.create_button.setEnabled(self.source is not None and lp.is_available()
+                                      and self._creating_from is None)
 
     def _enable_saving(self, enabled: bool) -> None:
         self.save_video_button.setEnabled(enabled)
@@ -169,6 +182,8 @@ class TimeMachineView(QWidget):
         self.source: np.ndarray | None = None       # a foto aberta, como chegou
         self.aged: np.ndarray | None = None
         self.shown: np.ndarray | None = None
+        self.worker: TaskWorker | None = None
+        self._restoring_aged: np.ndarray | None = None    # a foto envelhecida que está sendo restaurada agora
         self.era_buttons: dict[str, QPushButton] = {}
 
         eras = QHBoxLayout()
@@ -204,7 +219,7 @@ class TimeMachineView(QWidget):
         self.view.clear()
         for button in self.era_buttons.values():
             button.setEnabled(image is not None)
-        self.restore_back.setEnabled(False)
+        self._update_restore_back()
         self.save_button.setEnabled(False)
         self.status.clear()
 
@@ -213,15 +228,38 @@ class TimeMachineView(QWidget):
             return
         self.aged = travel(self.source, era)
         self._show(self.aged)
-        self.restore_back.setEnabled(True)
+        self._update_restore_back()
         self.status.setText(ERAS[era].name + ": " + ERAS[era].description)
 
     def round_trip(self) -> None:
-        if self.aged is None:
+        """Restaura a foto envelhecida em segundo plano: leva segundos e travaria a janela."""
+        if self.aged is None or self._restoring_aged is not None:
             return
-        restored = restore(self.aged).image
-        self._show(side_by_side(self.aged, restored))
+        self._wait()        # a thread anterior avisa que terminou um instante antes de terminar de vez
+        self._restoring_aged = aged = self.aged
+        self.worker = TaskWorker(lambda: restore(aged).image)
+        self.worker.done.connect(self._show_round_trip)
+        self.worker.failed.connect(self._report_failure)
+        self._update_restore_back()
+        self.status.setText("Restaurando a foto envelhecida…")
+        self.worker.start()
+
+    def _show_round_trip(self, restored: np.ndarray) -> None:
+        aged, self._restoring_aged = self._restoring_aged, None
+        self._update_restore_back()
+        if aged is not self.aged:      # outra foto ou outra época chegou no meio da restauração
+            return
+        self._show(side_by_side(aged, restored))
         self.status.setText("Esquerda: envelhecida. Direita: restaurada pelo Retrato Vivo.")
+
+    def _report_failure(self, message: str) -> None:
+        self._restoring_aged = None
+        self._update_restore_back()
+        self.status.setText(f"Não foi possível restaurar: {message}")
+
+    def _update_restore_back(self) -> None:
+        # Fica travado durante a restauração: uma de cada vez.
+        self.restore_back.setEnabled(self.aged is not None and self._restoring_aged is None)
 
     def _show(self, image: np.ndarray) -> None:
         self.shown = image
@@ -233,3 +271,11 @@ class TimeMachineView(QWidget):
                                               "PNG (*.png);;JPEG (*.jpg)")
         if path:
             self.status.setText(f"Salvo em {save_image(path, self.shown)}")
+
+    def _wait(self) -> None:
+        if self.worker is not None:
+            self.worker.wait()
+
+    def shutdown(self) -> None:
+        """O Qt aborta o programa se um ``QThread`` for destruído enquanto ainda roda."""
+        self._wait()

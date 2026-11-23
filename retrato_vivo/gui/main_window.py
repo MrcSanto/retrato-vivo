@@ -296,6 +296,7 @@ class MainWindow(QMainWindow):
         self.rerun_timer.stop()      # nada de começar outra restauração com a janela fechando
         self._wait_for_worker()
         self.living_view.shutdown()
+        self.time_machine.shutdown()
         self.edges_view.shutdown()
         super().closeEvent(event)
 
