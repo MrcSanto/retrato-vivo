@@ -107,6 +107,7 @@ Quem seguir estas regras consegue plugar seu trabalho sem mexer no código dos o
    res.damage.stats   # nº de riscos, vincos, manchas, % da área, rostos protegidos
    res.damage.report  # quantas candidatas cada teste descartou
    res.timings_ms     # tempo de cada fase (mostrar na GUI = critério "desempenho")
+   res.paper_corners  # os 4 cantos do papel usados na correção de perspectiva (None: não houve)
    STEP_INFO[nome]    # (título, descrição) de cada etapa, para exibir ao usuário
    ```
    A lista de controles que a GUI pode expor está em
@@ -270,9 +271,10 @@ Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
 
 ### 6.3 Marcos Paulo de Medeiros: interface gráfica (GUI)
 
-**Status: ✅ itens 1 a 10 prontos e testados. Itens 1 a 8 com o polimento (18/11): restauração
+**Status: ✅ itens 1 a 11 prontos e testados. Itens 1 a 8 com o polimento (18/11): restauração
 refeita ao mexer nos controles, e desfazer e zoom no editor de máscara. As abas dos extras
-(item 9) foram feitas pelo Igor (20/11) e corrigidas em 23/11.** Como usar: seção "Interface gráfica" do
+(item 9) foram feitas pelo Igor (20/11) e corrigidas em 23/11. A aba "Perspectiva" (item 11)
+entrou em 23/11.** Como usar: seção "Interface gráfica" do
 [README](../README.md). Pasta: `retrato_vivo/gui/`. Vale 1,0 ponto ("qualidade da
 interface e desempenho"), e é por ela que o professor vai testar com fotos dele.
 
@@ -314,6 +316,11 @@ rodam sem tela.
    se outra foto chegar no meio da criação, e o "Restaurar de volta" roda fora da thread da
    interface (travava a janela por cerca de 4 s na CPU). Testes em `tests/test_gui_extras.py`.
 10. ✅ Opção "Ampliar" e aba "Bordas" (feitas pelo Marco em 22/11, ver 6.2 itens 3 e 9).
+11. ✅ Aba "Perspectiva" (23/11, `gui/perspective_editor.py`): com "Foto tirada do celular"
+    marcada, mostra em verde os 4 cantos do papel sobre a foto aberta. Arrastar um canto refaz a
+    restauração com os cantos marcados à mão; "Detectar de novo" volta à detecção automática.
+    Resolve o caso em que a detecção desiste, como o papel de margem branca sobre mesa clara:
+    sem papel encontrado, a aba oferece 4 cantos para o usuário levar até as pontas da foto.
 
 **Também é responsabilidade do Marcos Paulo:** README final (prints e link do vídeo) e
 gravação do vídeo demo de 30 a 60 s.
@@ -349,7 +356,11 @@ definiu a super-resolução com outros modelos. **A equipe precisa definir os re
   sombra forte; 29/30 e 27/30 com perspectiva mais forte. As **10 fotos digitalizadas voltam
   intactas.** Limitação: papel de margem branca sobre mesa clara quase sempre não é achado
   (3/10); a foto volta intacta. Dica na interface: fotografar sobre um fundo escuro.
-- Não feito: arrastar os cantos na GUI quando a detecção erra.
+- Arrastar os cantos na GUI quando a detecção erra: ✅ Marcos Paulo (23/11), aba "Perspectiva"
+  (ver 6.3 item 11). Para isso o pipeline ganhou `RestorationConfig.perspective_corners` (os 4
+  cantos marcados à mão, em pixels da foto como foi aberta; `None` = detectar) e
+  `result.paper_corners` (os cantos usados). Cantos repetidos, alinhados ou que cercam menos de
+  1% da foto são recusados: a nota explica e a foto segue intacta.
 - Testes em `tests/test_perspectiva.py`. **Igor:** toca no começo do `pipeline.restore()`.
 
 **Especificação original:**

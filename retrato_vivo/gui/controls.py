@@ -57,7 +57,8 @@ class ControlsPanel(QWidget):
         self.correct_perspective = make_checkbox("Foto tirada do celular", defaults.correct_perspective)
         self.correct_perspective.setToolTip("Para foto de uma foto impressa, tirada com o celular: acha as bordas "
                                             "do papel, desentorta e recorta. Funciona melhor com o papel sobre um "
-                                            "fundo escuro. Se não achar o papel, a foto segue como está.")
+                                            "fundo escuro. Se não achar o papel ou errar um canto, arraste os "
+                                            "cantos na aba Perspectiva.")
         self.use_ai = make_checkbox("Riscos com IA", damage.use_ai)
         if not damage_ai.is_available():
             self.use_ai.setEnabled(False)
