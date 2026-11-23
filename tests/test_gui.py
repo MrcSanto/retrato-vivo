@@ -35,6 +35,8 @@ from retrato_vivo.io_utils import load_image, save_image
 from retrato_vivo.pipeline import STEP_INFO, RestorationConfig, restore
 from retrato_vivo.visualize import side_by_side
 
+from test_perspectiva import phone_photo
+
 RED_BGR, GREEN_BGR, BLUE_BGR = (0, 0, 255), (0, 255, 0), (255, 0, 0)     # o OpenCV guarda os canais como azul, verde, vermelho
 WHITE_BGR = (255, 255, 255)
 RED, GREEN, BLUE = QColor(255, 0, 0), QColor(0, 255, 0), QColor(0, 0, 255)
@@ -1434,6 +1436,70 @@ def test_opening_another_photo_discards_the_painted_masks(restore_calls, window,
 
     assert restore_calls[-1]["mask_add"] is None        # a foto nova foi restaurada sem a pintura da anterior
     assert not window.mask_editor.canvas.mask_add.any()
+
+
+PHONE_PHOTO_TIMEOUT_S = 30.0    # a foto de celular é grande: a restauração de verdade leva alguns segundos
+
+
+@pytest.fixture
+def phone_photo_file(tmp_path):
+    """Foto impressa fotografada torta sobre a mesa: a correção de perspectiva acha o papel e recorta a foto."""
+    return save_image(tmp_path / "celular.png", phone_photo())
+
+
+def wait_for_the_next_result(window: MainWindow, previous, warnings: list[str]) -> None:
+    """Espera a restauração seguinte terminar. Se ela falhar, o aviso mostrado fica em ``warnings``."""
+    wait_until(lambda: window.result is not previous or warnings, PHONE_PHOTO_TIMEOUT_S)
+
+
+def test_checking_phone_photo_after_the_first_restoration_straightens_the_photo(window, phone_photo_file, warnings):
+    window.rerun_timer.setInterval(10)
+    window.open_photo(phone_photo_file)
+    wait_until(lambda: window.result is not None, PHONE_PHOTO_TIMEOUT_S)
+    whole_photo = window.result
+
+    window.controls.correct_perspective.setChecked(True)
+    wait_for_the_next_result(window, whole_photo, warnings)
+
+    assert not warnings
+    assert "perspectiva" in window.result.steps
+    assert window.result.original.shape != whole_photo.original.shape      # recortada: sobrou só o papel
+
+
+def test_painting_made_on_the_whole_photo_is_dropped_when_the_photo_is_straightened(
+        restore_calls, window, phone_photo_file, warnings):
+    window.resize(1000, 700)
+    window.show()
+    window.tabs.setCurrentWidget(window.mask_editor)
+    window.rerun_timer.setInterval(10)
+    window.open_photo(phone_photo_file)
+    wait_until(lambda: window.result is not None, PHONE_PHOTO_TIMEOUT_S)
+    whole_photo = window.result
+    paint_on_the_mask_tab(window, 0.5)
+
+    window.controls.correct_perspective.setChecked(True)
+    wait_for_the_next_result(window, whole_photo, warnings)
+
+    assert not warnings
+    assert restore_calls[-1]["mask_add"] is None        # a pintura era da foto inteira, com a mesa em volta
+    canvas = window.mask_editor.canvas
+    assert canvas.mask_add.shape == window.result.original.shape[:2]
+    assert not canvas.mask_add.any()
+
+
+def test_unchecking_phone_photo_brings_the_whole_photo_back(window, phone_photo_file, warnings):
+    window.rerun_timer.setInterval(10)
+    window.controls.correct_perspective.setChecked(True)
+    let_qt_run(0.05)                                    # o pedido de restaurar de novo passa: ainda não há foto
+    window.open_photo(phone_photo_file)
+    wait_until(lambda: window.result is not None, PHONE_PHOTO_TIMEOUT_S)
+    straightened = window.result
+
+    window.controls.correct_perspective.setChecked(False)
+    wait_for_the_next_result(window, straightened, warnings)
+
+    assert not warnings
+    assert window.result.original.shape == window.image.shape
 
 
 def test_smallest_window_still_fits_the_controls_and_the_mask_tools(window):
