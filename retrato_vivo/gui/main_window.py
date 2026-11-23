@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QDockWidget, QFileDialog, QLabel, QMainWindow, QM
 
 from .. import models, runtime
 from ..io_utils import SUPPORTED_EXTENSIONS, load_image, save_image
-from ..pipeline import RestorationResult
+from ..pipeline import RestorationConfig, RestorationResult
 from ..visualize import side_by_side
 from .compare_view import CompareView
 from .controls import ControlsPanel
@@ -67,6 +67,7 @@ class MainWindow(QMainWindow):
         self.image: np.ndarray | None = None            # a foto aberta, como load_image devolveu
         self.photo_path: Path | None = None
         self.result: RestorationResult | None = None    # a última restauração da foto aberta
+        self._result_config: RestorationConfig | None = None    # a configuração que gerou ``result``
         self.worker: RestoreWorker | None = None
         self.busy = False                               # há uma restauração rodando?
 
@@ -240,8 +241,9 @@ class MainWindow(QMainWindow):
     def restore_photo(self) -> None:
         """Restaura a foto aberta em segundo plano. O resultado chega em ``_show_result``."""
         self._wait_for_worker()
-        mask_add, mask_remove = self.mask_editor.canvas.masks()
-        self.worker = RestoreWorker(self.image, self.controls.config(),
+        config = self.controls.config()
+        mask_add, mask_remove = self._masks_for(config)
+        self.worker = RestoreWorker(self.image, config,
                                     post_stages=self.controls.post_stages(),
                                     mask_add=mask_add, mask_remove=mask_remove)
         self.worker.done.connect(self._show_result)
@@ -249,6 +251,17 @@ class MainWindow(QMainWindow):
         self._set_busy(True)
         self.statusBar().showMessage(f"{self._photo_label()} · restaurando…")
         self.worker.start()
+
+    def _masks_for(self, config: RestorationConfig) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """As máscaras pintadas, se ainda servem para a foto que ``config`` vai gerar.
+
+        A correção de perspectiva recorta a foto. A pintura feita num enquadramento não vale
+        para o outro e nem tem o mesmo tamanho: o pipeline falharia ao aplicá-la.
+        """
+        if self.result is not None and config.correct_perspective != self._result_config.correct_perspective:
+            self.mask_editor.canvas.clear_masks()
+            return None, None
+        return self.mask_editor.canvas.masks()
 
     def _restore_after_changes(self) -> None:
         """Chamado pelo ``rerun_timer`` quando o usuário para de mexer nos controles."""
@@ -260,7 +273,7 @@ class MainWindow(QMainWindow):
         self.restore_photo()
 
     def _show_result(self, result: RestorationResult) -> None:
-        self.result = result
+        self.result, self._result_config = result, self.worker.config
         self.compare_view.set_comparison(result.original, result.image)
         self.steps_view.set_result(result)
         self.mask_editor.set_result(result)
