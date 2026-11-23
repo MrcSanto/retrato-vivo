@@ -101,8 +101,7 @@ class LivingPortraitView(QWidget):
         source = self.source
         self.worker = TaskWorker(lambda: lp.make_living_portrait(source))
         self.worker.done.connect(self._show_portrait)
-        self.worker.failed.connect(lambda msg: (self._set_creating_from(None),
-                                                QMessageBox.warning(self, "Retrato Vivo", msg)))
+        self.worker.failed.connect(self._report_failure)
         self._set_creating_from(source)
         self.status.setText("Criando o Retrato Vivo… (alguns segundos)")
         self.worker.start()
@@ -119,6 +118,12 @@ class LivingPortraitView(QWidget):
         self.status.setText(f"{len(portrait.frames)} quadros criados em {seconds:.1f} s ({portrait.device}).")
         self.timer.start(int(1000 / portrait.fps))
         self._show_current()
+
+    def _report_failure(self, message: str) -> None:
+        self._set_creating_from(None)
+        # O status muda antes do aviso: a caixa fica aberta até o clique, e "Criando…" já não vale.
+        self.status.setText(f"Não foi possível criar o Retrato Vivo: {message}")
+        QMessageBox.warning(self, "Retrato Vivo", message)
 
     def _next_frame(self) -> None:
         if self.portrait is None or self.show_depth.isChecked():

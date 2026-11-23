@@ -123,6 +123,23 @@ def test_create_is_locked_until_the_running_creation_ends(living_view, portrait_
     assert living_view.create_button.isEnabled()
 
 
+def test_a_failed_portrait_creation_is_reported_and_can_be_tried_again(living_view, monkeypatch):
+    warnings = []       # a caixa de aviso de verdade ficaria esperando um clique
+
+    def broken_creation(source: np.ndarray) -> lp.LivingPortrait:
+        raise RuntimeError("modelo corrompido")
+
+    monkeypatch.setattr(extras_module.QMessageBox, "warning", lambda parent, title, text: warnings.append(text))
+    monkeypatch.setattr(extras_module.lp, "make_living_portrait", broken_creation)
+    living_view.set_source(photo(10))
+
+    living_view.create_button.click()
+    wait_until(lambda: warnings, timeout_s=WORK_TIMEOUT_S)
+
+    assert "modelo corrompido" in living_view.status.text()      # e não "Criando…" para sempre
+    assert living_view.create_button.isEnabled()
+
+
 # ============================================================ Máquina do tempo
 
 @pytest.fixture
