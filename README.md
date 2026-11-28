@@ -126,5 +126,6 @@ Feitas com as fotos de exemplo da pasta `imagens/`.
 ## Documentação
 
 - **[docs/COMO_FUNCIONA.md](docs/COMO_FUNCIONA.md)**: o que cada arquivo e cada etapa faz.
-- **[docs/DIFERENCIAL.md](docs/DIFERENCIAL.md)**: Retrato Vivo e Máquina do tempo, e o roteiro da apresentação.
+- **[docs/DIFERENCIAL.md](docs/DIFERENCIAL.md)**: Retrato Vivo e Máquina do tempo.
+- **[docs/APRESENTACAO.md](docs/APRESENTACAO.md)**: roteiro da apresentação (até 7 minutos), com o que cada um mostra e as respostas para as perguntas.
 - **[docs/FLUXO_DE_TRABALHO.md](docs/FLUXO_DE_TRABALHO.md)**: divisão de tarefas, prazos e regras para contribuir.
