@@ -9,13 +9,14 @@
 | **Professor** | Dr. Rafael Rieder (GitHub: `rafaelrieder`) |
 | **Tema** | Restaurador de fotos antigas, com dois extras (ver [seção 7](#7-o-algo-a-mais)) |
 | **Equipe** | Igor Zanette · Marco Antonio Santolin · Marcos Paulo de Medeiros |
-| **Stack** | Python 3.12+ · OpenCV 4.x (`cv2`, `cv2.dnn`; o 5 não lê Caffe) · NumPy · PySide6 (GUI) · pytest |
+| **Stack** | Python 3.10+ · OpenCV 4.x (`cv2`, `cv2.dnn`; o 5 não lê Caffe) · ONNX Runtime (redes pesadas, GPU opcional) · NumPy · PySide6 (GUI) · pytest |
 
 ---
 
 ## Sumário
 
 1. [Prazos](#1-prazos)
+   - [Reta final: o que falta (28/11)](#reta-final-o-que-falta-2811)
 2. [Arquitetura](#2-arquitetura)
 3. [Contrato entre os módulos](#3-contrato-entre-os-módulos-leia-antes-de-codar)
 4. [Como rodar](#4-como-rodar)
@@ -24,7 +25,7 @@
    - [6.1 Igor: pré-processamento e danos](#61-igor-zanette-pré-processamento-detecção-e-preenchimento-de-danos)
    - [6.2 Marco: Deep Learning](#62-marco-antonio-santolin-deep-learning)
    - [6.3 Marcos Paulo: interface gráfica](#63-marcos-paulo-de-medeiros-interface-gráfica-gui)
-   - [6.4 Itens da proposta enviada ao professor](#64-itens-da-proposta-enviada-ao-professor-a-distribuir)
+   - [6.4 Itens da proposta enviada ao professor](#64-itens-da-proposta-enviada-ao-professor-concluídos)
 7. [O "algo a mais"](#7-o-algo-a-mais)
 8. [Cronograma](#8-cronograma)
 9. [Checklist de entrega](#9-checklist-de-entrega-requisitos-do-enunciado)
@@ -40,6 +41,27 @@
 | 24–29/11 | Polimento, testes com fotos variadas, vídeo demo, README, ensaio |
 | **30/11 (seg)** | **Apresentação final** (até 10 min; o professor vai testar com fotos dele) |
 
+### Reta final: o que falta (28/11)
+
+O código está completo: tudo o que o enunciado e a proposta enviada ao professor pedem está
+na `main`, integrado na interface e testado. Falta preparar a entrega:
+
+| | O que | Quem |
+|---|---|---|
+| 1 | **Vídeo demo de 30 a 60 s** e o link no README (hoje está "_(em breve)_") | Marcos Paulo |
+| 2 | **Ensaio de até 10 min**, com fotos que ninguém usou no desenvolvimento (roteiro em [DIFERENCIAL.md](DIFERENCIAL.md#roteiro-sugerido-para-a-apresentação)) | todos |
+| 3 | **Preparar o notebook da apresentação:** `pip install -r requirements.txt`, `python -m retrato_vivo modelos` (~1,9 GB, fazer antes, não na sala) e abrir a interface no projetor | quem levar o notebook |
+| 4 | Limitações conhecidas, para **assumir na apresentação** em vez de corrigir agora: vinco que cruza cabelo fica com um trecho sem reparo; a detecção automática de rasgos é básica (o caminho é pintar o rasgo na aba Máscara e deixar o LaMa preencher); a super-resolução tem ganho modesto | todos |
+
+**Testes (conferido por Marco em 28/11, Windows, OpenCV 4.14, todos os modelos baixados):**
+312 passam e 4 da interface falham só no Windows: em `tests/test_gui.py`,
+`test_compare_view_labels_each_side_at_the_top`, `test_label_disappears_when_its_side_gets_too_narrow`,
+`test_apply_button_restores_again_with_the_painted_masks` e
+`test_smallest_window_still_fits_the_controls_and_the_mask_tools`. **Não é defeito da interface:**
+no modo "offscreen" do Qt no Windows não existe a fonte Segoe UI, e a fonte substituta é mais
+larga (largura mínima da janela 1172 px no teste, contra **934 px** na tela de verdade). Correção
+opcional (Marcos Paulo): fixar a fonte da `QApplication` nos testes.
+
 ## 2. Arquitetura
 
 ```
@@ -53,22 +75,34 @@
 ```
 retrato-vivo/
 ├── retrato_vivo/
-│   ├── io_utils.py      [Igor]  abrir e salvar qualquer foto
-│   ├── preprocess.py    [Igor]  diagnóstico, cor, contraste, ruído, nitidez
-│   ├── faces.py         [Igor]  detector de rostos (YuNet)
-│   ├── damage.py        [Igor]  detecção de riscos, vincos e manchas
-│   ├── inpaint.py       [Igor]  preenchimento dos danos
-│   ├── visualize.py     [Igor]  mapa de danos, antes/depois, painel de etapas
-│   ├── aging.py         [Igor]  efeitos de foto antiga (avaliação + Máquina do tempo)
-│   ├── metrics.py       [Igor]  PSNR, SSIM, precisão/revocação
-│   ├── pipeline.py      [todos] ordem das etapas: o PONTO DE INTEGRAÇÃO
-│   ├── models.py        [todos] registro e download dos modelos pré-treinados
-│   ├── cli.py                   linha de comando (testar sem GUI)
-│   ├── ai/              [Marco] colorização, super-resolução, rosto...
-│   └── gui/             [Marcos Paulo] interface gráfica
-├── models/              pesos baixados (NÃO vão para o git)
-├── tests/               pytest
-└── docs/                este documento e COMO_FUNCIONA.md
+│   ├── io_utils.py         [Igor]  abrir e salvar qualquer foto
+│   ├── perspective.py      [Marco] correção de perspectiva ("foto de uma foto")
+│   ├── preprocess.py       [Igor]  diagnóstico, cor, contraste, ruído, nitidez
+│   ├── faces.py            [Igor]  detector de rostos (YuNet)
+│   ├── damage.py           [Igor]  detecção de riscos, vincos e manchas (morfologia)
+│   ├── damage_ai.py        [Igor]  detector de riscos com IA (rede da Microsoft, ONNX)
+│   ├── inpaint.py          [Igor]  preenchimento dos danos (Telea, Navier-Stokes, LaMa)
+│   ├── runtime.py          [Igor]  ONNX Runtime: GPU (CUDA) quando houver, senão CPU
+│   ├── visualize.py        [Igor]  mapa de danos, antes/depois, painel de etapas
+│   ├── aging.py            [Igor]  efeitos de foto antiga (avaliação + Máquina do tempo)
+│   ├── metrics.py          [Igor]  PSNR, SSIM, precisão/revocação
+│   ├── living_portrait.py  [Igor]  Retrato Vivo: vídeo 3D a partir da profundidade
+│   ├── time_machine.py     [Igor]  Máquina do tempo: presets de época
+│   ├── pipeline.py         [todos] ordem das etapas: o PONTO DE INTEGRAÇÃO
+│   ├── models.py           [todos] registro e download dos modelos pré-treinados
+│   ├── cli.py              [todos] linha de comando (testar sem GUI)
+│   ├── ai/                         Deep Learning plugado depois da restauração
+│   │   ├── colorize.py     [Marco] colorização de Zhang et al. (ECCV 2016)
+│   │   ├── superres.py     [Marco] super-resolução ESPCN/EDSR
+│   │   ├── tf_fix.py       [Marco] conserto do DepthToSpace do TensorFlow no OpenCV 4.14
+│   │   ├── edges.py        [Marco] bordas Canny × HED
+│   │   ├── ddcolor.py      [Igor]  colorização DDColor (padrão da interface)
+│   │   └── face_restore.py [Igor]  restauração de rostos (GFPGAN)
+│   └── gui/                [Marcos Paulo] interface gráfica (abas Bordas: Marco; extras e navegação de pasta: Igor)
+├── models/                 pesos baixados (NÃO vão para o git)
+├── imagens/                fotos de exemplo (nenhuma pessoal)
+├── tests/                  pytest
+└── docs/                   este documento, COMO_FUNCIONA, DIFERENCIAL, DIAGNOSTICO_RESTAURACAO
 ```
 
 A explicação detalhada da restauração clássica está em
@@ -181,7 +215,8 @@ Resumo do que existe:
   além da variação de cor, `diagnose` agora mede quanto da cor fica fora do tom dominante
   (`off_tone_pct`). Fotos reais certas: 12/13 → 13/13 (`foto_rasgada2` era o erro); com 63
   variações sintéticas, 46/76 → 71/76. Detalhes em [COMO_FUNCIONA.md](COMO_FUNCIONA.md).
-  Falta conferir a colorização de ponta a ponta com OpenCV 4.x e os modelos baixados.
+  ✅ Colorização conferida de ponta a ponta (Marco, 28/11, OpenCV 4.14): as 10 fotos de
+  `imagens/` e as versões em sépia das 3 coloridas foram detectadas e coloridas.
 
 - [x] **IA na restauração (20/11):** detector de riscos da Microsoft convertido para ONNX
   (`damage_ai.py`), LaMa nas áreas grandes (`inpaint.py`, método `ia`), execução na GPU com
@@ -191,20 +226,23 @@ Resumo do que existe:
   [DIAGNOSTICO_RESTAURACAO.md](DIAGNOSTICO_RESTAURACAO.md#0-o-que-já-foi-aplicado-2011-pelo-igor-na-rtx-4080).
 
 **Pendências do Igor:**
-- [ ] Anexar `scratch_detector.onnx` ao Release `modelos-v1` pelo site do GitHub (a URL já está em `models.py`).
-- [ ] Rodar os testes com OpenCV 4.x, a versão fixada agora no `requirements.txt`.
-  A parte do Igor foi desenvolvida e testada no OpenCV 5.
-- [ ] Vinco que cruza cabelo ou outra textura ainda fica com um trecho sem reparo.
-- [ ] Detecção de rasgos (`detect_large_losses`) é básica e fica desligada por padrão.
+- [x] Anexar `scratch_detector.onnx` ao Release `modelos-v1` (o download responde, conferido em 28/11).
+- [x] Rodar os testes com OpenCV 4.x: os testes da restauração passam no 4.14 (Marco, 28/11).
 
-**Ainda sem responsável, com a área do Igor como candidata:** correção de perspectiva
-(seção 6.4), Retrato Vivo e Máquina do tempo (seção 7).
+**Limitações conhecidas** (assumir na apresentação; ver "Reta final", seção 1):
+- Vinco que cruza cabelo ou outra textura ainda fica com um trecho sem reparo.
+- Detecção automática de rasgos (`detect_large_losses`) é básica e fica desligada por padrão;
+  o caminho é pintar o rasgo na aba Máscara, e o LaMa preenche.
+
+Os itens que estavam sem responsável foram feitos: correção de perspectiva (Marco, seção 6.4),
+Retrato Vivo e Máquina do tempo (Igor, seção 7).
 
 ---
 
 ### 6.2 Marco Antonio Santolin: Deep Learning
 
-**Status: ✅ colorização (16/11), super-resolução (17/11) e bordas Canny vs. HED (22/11) prontas e testadas.**
+**Status: ✅ concluído. Colorização (16/11), super-resolução (17/11), bordas Canny vs. HED e correção de
+perspectiva (22/11), com as opções na interface, prontas e testadas.**
 Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
 "Deep Learning" do enunciado, então é a parte mais visível da nota de complexidade.
 
@@ -246,9 +284,12 @@ Pasta: `retrato_vivo/ai/`. É aqui que está o requisito
    `ai/face_restore.py`: GFPGAN v1.4 em ONNX Runtime, opção `--rostos`. Junto veio o DDColor
    (`ai/ddcolor.py`), que virou a colorização padrão (`--modelo-cor zhang` usa a minha).
 5. ✅ **Inpainting com DL (opcional).** Feito pelo Igor (20/11): LaMa em `inpaint.py`.
-6. **CUDA (opcional).** O `opencv-python` do pip **não tem CUDA**. Só vale a pena se der
-   tempo de compilar o OpenCV com CUDA. O enunciado aceita "DL **e/ou** CUDA", então DL basta.
-7. Testes em `tests/test_ai.py`, usando `pytest.mark.skipif` quando o modelo não foi baixado.
+6. ✅ **CUDA (opcional).** O `opencv-python` do pip **não tem CUDA**, então as redes do `cv2.dnn`
+   (colorização de Zhang, ESPCN/EDSR, HED, YuNet) rodam na CPU. As redes pesadas (LaMa, detector
+   de riscos, GFPGAN, DDColor, Depth Anything) rodam no ONNX Runtime e usam a placa NVIDIA quando
+   houver (`runtime.py`, Igor, 20/11). O enunciado aceita "DL **e/ou** CUDA": temos os dois.
+7. ✅ Testes em `tests/test_ai.py`, `tests/test_perspectiva.py` e `tests/test_gui_ia.py`, com
+   `pytest.mark.skipif` quando o modelo não foi baixado.
 8. ✅ **Responsável por compartilhar o repo com `rafaelrieder`.** Feito.
 9. ✅ **Bordas Canny vs. HED (item da proposta, seção 6.4).** Feito em `ai/edges.py`:
    `bordas_canny(img)`, `bordas_hed(img)` e `painel_bordas(antes, depois)` (2×2: Canny/HED ×
@@ -329,16 +370,16 @@ link no README.
 
 ---
 
-### 6.4 Itens da proposta enviada ao professor (a distribuir)
+### 6.4 Itens da proposta enviada ao professor (concluídos)
 
 A proposta enviada ao professor prometeu dois itens que ainda não tinham tarefa, e
-definiu a super-resolução com outros modelos. **A equipe precisa definir os responsáveis.**
+definiu a super-resolução com outros modelos. **Os três foram feitos pelo Marco (22/11).**
 
 | Item | O que fazer | Técnicas | Área sugerida | Responsável |
 |---|---|---|---|---|
 | **Correção de perspectiva** ("foto de uma foto") | Quem fotografa uma foto impressa com o celular tem o papel torto, em trapézio, e com fundo em volta. A etapa acha as 4 bordas do papel, "desentorta" e recorta. | Canny/limiarização, `findContours`, `approxPolyDP` (maior quadrilátero), ordenar cantos, `getPerspectiveTransform` + `warpPerspective` | Igor (pré-processamento) ou Marcos Paulo (modo da GUI) | ✅ **Marco (22/11)**, ver abaixo |
 | **Comparação de bordas Canny vs. HED** | Mostrar lado a lado as bordas da foto antes e depois da restauração, pelo método clássico (Canny) e por Deep Learning (HED). Mostra o ganho da restauração e a diferença entre PI clássico e DL. | `cv2.Canny`; HED (Xie & Tu, ICCV 2015, Caffe) via `cv2.dnn`, com a camada `Crop` customizada | Marco (Deep Learning) | ✅ **Marco (22/11)**, ver 6.2 item 9 |
-| **Super-resolução: modelos** | A proposta citava ESPCN/EDSR via `dnn_superres`, mas esse módulo está no *contrib*, que não instalamos. Usar os mesmos `.pb` via `cv2.dnn`: **ESPCN** como padrão (rápido) e **EDSR** como "qualidade máxima" (lento). | `cv2.dnn.readNetFromTensorflow`, ×2/×4 | Marco | Marco (já na 6.2) |
+| **Super-resolução: modelos** | A proposta citava ESPCN/EDSR via `dnn_superres`, mas esse módulo está no *contrib*, que não instalamos. Usar os mesmos `.pb` via `cv2.dnn`: **ESPCN** como padrão (rápido) e **EDSR** como "qualidade máxima" (lento). | `cv2.dnn.readNetFromTensorflow`, ×2/×4 | Marco | ✅ **Marco (17/11)**, ver 6.2 item 3 |
 
 **Correção de perspectiva: ✅ feita (Marco, 22/11)** em `retrato_vivo/perspective.py`:
 `encontrar_papel(img)`, `retificar(img, cantos)`, `desenhar_cantos(img, cantos)` e
@@ -397,7 +438,7 @@ O professor pediu que o sistema faça algo além de restaurar. **Decisão (15/11
 Os dois foram implementados pelo Igor em 20/11, com abas próprias na interface. Explicação e
 roteiro para a apresentação: **[DIFERENCIAL.md](DIFERENCIAL.md)**.
 
-### O que já existe da parte do Igor para cada extra
+### Planejamento original de cada extra (histórico)
 
 **Máquina do tempo.** Os efeitos estão prontos e testados em `retrato_vivo/aging.py`.
 Uma época é só uma sequência deles (exemplo no topo do arquivo):
@@ -409,10 +450,8 @@ Uma época é só uma sequência deles (exemplo no topo do arquivo):
 | Danos | `add_scratches`, `add_spots` |
 | Acabamento | `crop_square`, `add_border`, `polaroid_frame`, `date_stamp` |
 
-Falta para quem pegar: os presets de cada época (1900, 1920, 1950, 1970, Polaroid 1990),
-um comando ou função `viajar(foto, epoca)` e a aba na GUI. Bônus para a demo: envelhecer
-a selfie do professor e depois restaurá-la com o pipeline (o "ida e volta" já é testado
-em `test_aged_photo_is_restorable`).
+✅ Feito (Igor, 20/11): presets das cinco épocas em `time_machine.py`, comando
+`python -m retrato_vivo viajar` e aba na interface com "Restaurar de volta" (o "ida e volta").
 
 **Retrato Vivo.** Usa da parte do Igor:
 
@@ -425,9 +464,9 @@ em `test_aged_photo_is_restorable`).
   borrão). Por isso a versão multiescala não entrou. Para disfarçar, mantenha o
   movimento pequeno (as faixas ficam estreitas) e preencha a máscara *antes* de mover.
 
-Falta para quem pegar: estimativa de profundidade (MiDaS via `cv2.dnn`, registrar em
-`models.py`), separar camadas pela profundidade, mover a câmera, gerar os quadros e
-exportar MP4/GIF.
+✅ Feito (Igor, 20/11) em `living_portrait.py`, com o Depth Anything V2 no lugar do MiDaS e o
+LaMa no lugar do inpainting clássico para o fundo revelado (que virava borrão, como previsto
+acima). Comando `python -m retrato_vivo vivo` e aba na interface.
 
 Ideias que ficaram de fora (só se sobrar tempo): estimar a idade das pessoas e dizer
 "hoje teria ~86 anos"; agrupar a mesma pessoa em várias fotos (`cv2.FaceRecognizerSF`);
@@ -439,8 +478,8 @@ colorização guiada por clique; laudo de restauração em HTML/PDF.
 |---|---|---|---|
 | 15–16/11 | ✅ Restauração clássica, testes, documentação | Colorização + registro de modelos | Esqueleto da GUI: abrir, restaurar, antes/depois |
 | 17–22/11 | Ajustes com mais fotos; apoio ao editor de máscara | Super-resolução; rosto ou inpainting DL (opcional) | Etapas, controles, editor de máscara, QThread |
-| 17–22/11 | **Extras (responsáveis a definir): Retrato Vivo e Máquina do tempo** | | |
-| 17–22/11 | **Itens da proposta (seção 6.4, responsáveis a definir): correção de perspectiva e Canny vs. HED** | | |
+| 17–22/11 | ✅ **Extras: Retrato Vivo e Máquina do tempo (Igor, 20/11)** | | |
+| 17–22/11 | ✅ **Itens da proposta (seção 6.4): correção de perspectiva e Canny vs. HED (Marco, 22/11)** | | |
 | **23/11** | **Integração na GUI (todos juntos em aula)** | | |
 | 24–27/11 | Ajustes finos | Ajustes finos | README |
 | 28–29/11 | Ensaio da apresentação + **vídeo demo** + teste com fotos nunca vistas | | |
@@ -457,7 +496,7 @@ colorização guiada por clique; laudo de restauração em HTML/PDF.
 - [ ] **Vídeo demo de 30 a 60 s**, com link no README
 - [x] **Flexibilidade de arquivos:** qualquer formato, tamanho, P&B/colorida, 16 bits, alfa, acentos, celular
 - [x] Repo **compartilhado com `rafaelrieder`**
-- [ ] **Commits dos três, equilibrados**
+- [x] **Commits dos três, equilibrados** (28/11, sem contar merges: Igor 27, Marco 30, Marcos Paulo 33)
 - [x] Repo só com código-fonte e dependências (sem pesos nem fotos pessoais): `models/` fica
       fora do git, e as fotos de `imagens/` e de `docs/img/` são de exemplo, nenhuma pessoal
       (conferido em 23/11)
