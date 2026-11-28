@@ -19,10 +19,10 @@ Antes de mudar algo, leia:
 
 | Pasta / arquivo | Responsável |
 |---|---|
-| `io_utils`, `preprocess`, `faces`, `damage`, `inpaint`, `visualize`, `aging`, `metrics` | Igor Zanette |
-| `retrato_vivo/ai/` (colorização, super-resolução, rosto, profundidade) | Marco Antonio Santolin |
-| `retrato_vivo/gui/` (PySide6) | Marcos Paulo de Medeiros |
-| `pipeline.py`, `models.py` | todos (ponto de integração) |
+| `io_utils`, `preprocess`, `faces`, `damage`, `damage_ai`, `inpaint`, `runtime`, `visualize`, `aging`, `metrics`, `living_portrait`, `time_machine`, `ai/ddcolor`, `ai/face_restore` | Igor Zanette |
+| `perspective`, `ai/colorize`, `ai/superres`, `ai/tf_fix`, `ai/edges` | Marco Antonio Santolin |
+| `retrato_vivo/gui/` (PySide6) | Marcos Paulo de Medeiros (abas Bordas: Marco; extras e navegação de pasta: Igor) |
+| `pipeline.py`, `models.py`, `cli.py` | todos (ponto de integração) |
 
 Mexa só na área da pessoa que está pedindo. Se precisar alterar código de outra área,
 avise antes em vez de editar.
@@ -35,7 +35,11 @@ python -m retrato_vivo modelos                                   # baixa os peso
 python -m pytest                                                 # precisa passar sempre
 python -m retrato_vivo restaurar foto.jpg -o saida --painel --explicar
 python -m retrato_vivo avaliar foto_boa.jpg -o avaliacao         # PSNR/SSIM
+python -m retrato_vivo.gui                                       # interface gráfica
 ```
+
+No Windows, 4 testes de `tests/test_gui.py` falham por causa da fonte do modo "offscreen" do
+Qt, não por defeito (detalhes em `docs/FLUXO_DE_TRABALHO.md`, seção "Reta final").
 
 ## Contrato de código
 
@@ -47,7 +51,9 @@ python -m retrato_vivo avaliar foto_boa.jpg -o avaliacao         # PSNR/SSIM
 - Inpainter alternativo: `def inpainter(img, mask_uint8) -> np.ndarray`.
 - A GUI só conversa com `pipeline.restore()`.
 - Modelos pré-treinados: registre em `retrato_vivo/models.py` e use
-  `models.model_path("nome")`. Carregue com `cv2.dnn` (não há `opencv-contrib` nem CUDA).
+  `models.model_path("nome")`. Redes leves: `cv2.dnn` do OpenCV 4.x (não há `opencv-contrib`,
+  e o OpenCV 5 não lê Caffe). Redes pesadas em ONNX: `runtime.session(caminho)`, que usa a GPU
+  (CUDA) quando houver e cai para a CPU sozinho.
 - Toda função nova ganha pelo menos um teste em `tests/`. Testes que dependem de modelo
   baixado usam `pytest.mark.skipif`.
 - Código, comentários, docstrings e textos de interface em **português**.
